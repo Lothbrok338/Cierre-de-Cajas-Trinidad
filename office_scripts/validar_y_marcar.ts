@@ -113,7 +113,7 @@ function main(workbook: ExcelScript.Workbook): string {
     if (veces[f.codigo] > 1) { f.msg = "✖ REPETIDO EN LA LISTA"; continue; }
     const ubic = indice[f.codigo];
     if (!ubic || ubic.length === 0) { f.msg = "✖ NO EXISTE EN EXTRACTO"; continue; }
-    if (ubic.length > 1) { f.msg = "✖ DUPLICADO EN EXTRACTO (filas " + ubic.map(function (x) { return x + 1; }).join(", ") + ")"; continue; }
+    if (ubic.length > 1) { f.msg = "✖ DUPLICADO EN EXTRACTO (filas " + ubic.map((x) => x + 1).join(", ") + ")"; continue; }
     const i = ubic[0];
     f.filaExtracto = i + 1;
 
@@ -150,7 +150,7 @@ function main(workbook: ExcelScript.Workbook): string {
     f.ok = true; f.msg = "✔ MARCADO"; escrituras.push({ fila: i, factura: f.factura, marca: marca });
   }
 
-  const hayErrores = filas.some(function (f) { return !f.ok; });
+  const hayErrores = filas.some((f) => !f.ok);
   if (hayErrores) {
     const noHecho = modoLiberar ? "— NO LIBERADO: hay errores en el lote" : "— NO MARCADO: hay errores en el lote";
     for (const f of filas) if (f.ok && f.msg.indexOf("YA MARCADO") < 0) f.msg = f.msg + " " + noHecho;
@@ -181,7 +181,7 @@ function cerrarLote(lote: ExcelScript.Worksheet, extracto: ExcelScript.Worksheet
   for (const f of filas) {
     lote.getRangeByIndexes(f.r, L_RESULTADO, 1, 3).setValues([[f.msg, f.filaExtracto > 0 ? f.filaExtracto : "", ahora]]);
   }
-  const k = filas.filter(function (f) { return f.ok; }).length;
+  const k = filas.filter((f) => f.ok).length;
   const resumen = "Lote: " + filas.length + " filas · ✔ " + k + " · ✖ " + (filas.length - k) + " · Escrito: " + (escrito ? "sí" : "no")
     + (errorGeneral ? " · " + errorGeneral : "");
   return terminar(lote, resumen);
@@ -198,7 +198,7 @@ function prepararHojaLote(hoja: ExcelScript.Worksheet) {
   hoja.getRange("C:F").setNumberFormat("@");
   hoja.getRange("G:H").setNumberFormat("@");
   const enc = hoja.getRangeByIndexes(0, 0, 1, ANCHO_LOTE);
-  enc.setNumberFormat([ENCABEZADOS_LOTE.map(function () { return "@"; })]);
+  enc.setNumberFormat([ENCABEZADOS_LOTE.map(() => "@")]);
   enc.setValues([ENCABEZADOS_LOTE]);
   const fmt = enc.getFormat();
   fmt.getFont().setBold(true);
