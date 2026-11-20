@@ -19,6 +19,8 @@ const COL_FECHA = 0, COL_NRO = 2, COL_MONTO = 5, COL_H = 7, COL_I = 8, COL_J = 9
 const L_ACCION = 0, L_IMPORTE = 1, L_CODIGO = 2, L_FACTURA = 3, L_CORRELATIVO = 4, L_FECHA = 5, L_RESULTADO = 6, L_FILA = 7, L_PROCESADO = 8, ANCHO_LOTE = 9;
 const ENCABEZADOS_LOTE = ["Acción", "Importe", "Código de asignación", "N° factura", "Correlativo cierre", "Fecha cierre (dd/mm/aaaa)", "Resultado", "Fila extracto", "Procesado el"];
 
+interface Fila { r: number; accion: string; importe: number; codigo: string; factura: string; fecha: string; msg: string; ok: boolean; filaExtracto: number; mes: number }
+
 function main(workbook: ExcelScript.Workbook): string {
   // ---------- hoja del lote ----------
   let lote = workbook.getWorksheet(HOJA_LOTE);
@@ -69,7 +71,6 @@ function main(workbook: ExcelScript.Workbook): string {
   // ---------- leer el lote (una sola lectura) ----------
   const ultimaL = ultimaFila(lote);
   const L = ultimaL > 1 ? lote.getRangeByIndexes(0, 0, ultimaL, ANCHO_LOTE).getValues() : [];
-  interface Fila { r: number; accion: string; importe: number; codigo: string; factura: string; fecha: string; msg: string; ok: boolean; filaExtracto: number; mes: number }
   const filas: Fila[] = [];
   for (let r = 1; r < L.length; r++) {
     const f = L[r];
@@ -282,6 +283,6 @@ function valida(d: number, mes: number, y: number): { d: number; m: number; y: n
 }
 
 function fechaHoraTexto(d: Date): string {
-  const p = function (n: number) { return (n < 10 ? "0" : "") + n; };
+  const p = (n: number): string => (n < 10 ? "0" : "") + n;
   return p(d.getDate()) + "/" + p(d.getMonth() + 1) + "/" + d.getFullYear() + " " + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
 }
