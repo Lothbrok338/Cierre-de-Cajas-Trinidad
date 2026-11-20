@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block titulo %}{{ 'Cierres' if todos else 'Mis cierres' }}{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>{{ 'Cierres presentados' if todos else 'Mis cierres' }}</h1>
+  {% if not todos %}<a class="btn btn-prim" href="/nuevo">Nuevo cierre</a>{% endif %}
+</div>
+{% if cierres %}
+<div class="tabla-wrap">
+<table class="tabla">
+  <thead><tr><th>Correlativo</th><th>Fecha del cierre</th>{% if todos %}<th>Cajero</th>{% endif %}<th class="num">Total (Bs)</th><th>Estado</th><th>Presentado el</th><th></th></tr></thead>
+  <tbody>
+  {% for c in cierres %}
+  <tr>
+    <td data-l="Correlativo"><strong>{{ c.correlativo }}</strong>{% if c.version > 1 %} <small>v{{ c.version }}</small>{% endif %}</td>
+    <td data-l="Fecha del cierre">{{ c.fecha_cierre | fecha }}</td>
+    {% if todos %}<td data-l="Cajero">{{ c.nombre }}</td>{% endif %}
+    <td data-l="Total (Bs)" class="num">{{ c.total_cierre | bs }}</td>
+    <td data-l="Estado"><span class="insignia {{ 'ins-gris' if c.estado_revision == 'REEMPLAZADO' else 'ins-azul' }}">{{ c.estado_revision }}</span></td>
+    <td data-l="Presentado el">{{ c.presentado_en | fecha_hora }}</td>
+    <td><a class="btn btn-sec btn-sm" href="/cierres/{{ c.id }}">Ver detalle</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<section class="tarjeta vacio"><p>Todavía no hay cierres presentados.</p>{% if not todos %}<p>Presione <strong>Nuevo cierre</strong> para empezar.</p>{% endif %}</section>
+{% endif %}
+{% endblock %}

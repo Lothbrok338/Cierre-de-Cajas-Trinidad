@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block titulo %}{{ c.correlativo }}{% endblock %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Cierre {{ c.correlativo }} <small>v{{ c.version }}</small></h1>
+  <span class="insignia {{ 'ins-gris' if c.estado_revision == 'REEMPLAZADO' else 'ins-azul' }}">{{ c.estado_revision }}</span>
+</div>
+<section class="tarjeta">
+  <dl class="datos">
+    <div><dt>Fecha del cierre</dt><dd>{{ c.fecha_cierre | fecha }}</dd></div>
+    <div><dt>Caja</dt><dd>{{ c.caja or '-' }}</dd></div>
+    <div><dt>Cajero</dt><dd>{{ c.nombre }} ({{ c.usuario }})</dd></div>
+    <div><dt>Presentado el</dt><dd>{{ c.presentado_en | fecha_hora }}</dd></div>
+    {% if anterior %}<div><dt>Reemplaza a</dt><dd>{{ anterior.correlativo }}</dd></div>
+    <div><dt>Motivo del reemplazo</dt><dd>{{ c.motivo_reemplazo }}</dd></div>{% endif %}
+  </dl>
+</section>
+{% if conceptos %}
+<h2>Cuadro del cierre</h2>
+<div class="tabla-wrap"><table class="tabla">
+  <thead><tr><th>Medio de pago</th><th class="num">Según sistema</th><th class="num">Según respaldo</th><th class="num">Diferencia</th><th>Estado</th></tr></thead>
+  <tbody>
+  {% for r in conceptos + [total] %}
+  <tr{% if r.concepto == 'TOTAL' %} class="fila-total"{% endif %}>
+    <td data-l="Medio de pago">{{ r.concepto }}{% if r.nota %}<br><small>{{ r.nota }}</small>{% endif %}</td>
+    <td data-l="Según sistema" class="num">{{ r.segun_sistema | bs }}</td><td data-l="Según respaldo" class="num">{{ r.segun_respaldo | bs }}</td>
+    <td data-l="Diferencia" class="num">{{ r.diferencia | bs }}</td>
+    <td data-l="Estado"><span class="insignia {{ 'ins-verde' if r.estado == 'CUADRA' else 'ins-rojo' }}">{{ r.estado }}</span></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+<h2>Archivos</h2>
+<ul class="archivos">
+  {% for a in archivos %}<li><a href="/cierres/{{ c.id }}/archivo/{{ a }}">{{ a }}</a></li>{% endfor %}
+</ul>
+<h2>Huellas de los archivos originales (SHA-256)</h2>
+<p class="mono">Movimiento: {{ c.sha256_movimiento }}<br>Banco QR BANECO: {{ c.sha256_banco }}</p>
+<p><a class="btn btn-sec" href="/">Volver</a></p>
+{% endblock %}

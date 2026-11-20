@@ -1,0 +1,8 @@
+{% extends 'base.html' %}
+{% block contenido %}
+<section class="tarjeta">
+  <h1>{{ 'No se encontró' if codigo == 404 else 'No se puede continuar' }}</h1>
+  <p>{{ mensaje }}</p>
+  <p><a class="btn btn-sec" href="/">Volver al inicio</a></p>
+</section>
+{% endblock %}

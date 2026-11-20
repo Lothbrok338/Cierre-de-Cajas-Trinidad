@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block titulo %}Nuevo cierre{% endblock %}
+{% block contenido %}
+<h1>Nuevo cierre</h1>
+<p class="ayuda">Suba los dos reportes del día e indique el total cobrado con tarjetas. El sistema los comparará y le mostrará el resultado antes de presentar.</p>
+{% if error %}<div class="aviso aviso-error" role="alert">{{ error }}</div>{% endif %}
+<form class="tarjeta formulario" method="post" action="/nuevo" enctype="multipart/form-data" id="form-nuevo">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="campo">
+    <label for="movimiento">1. Movimiento del cajero <small>(.xls o .xlsx del Sistema de Facturación, reporte «Ingreso Diario»)</small></label>
+    <input id="movimiento" name="movimiento" type="file" accept=".xls,.xlsx" required>
+  </div>
+  <div class="campo">
+    <label for="banco">2. Reporte QR BANECO <small>(.xlsx descargado del banco)</small></label>
+    <input id="banco" name="banco" type="file" accept=".xlsx" required>
+  </div>
+  <div class="campo">
+    <label for="tarjeta">3. Total cobrado con tarjetas <small>(Bs; escriba 0 si no hubo)</small></label>
+    <input id="tarjeta" name="tarjeta" type="text" inputmode="decimal" placeholder="Ejemplo: 1191.00" value="{{ tarjeta or '' }}" required>
+  </div>
+  <p class="ayuda">Tamaño máximo por archivo: {{ max_mb }} MB.</p>
+  <button class="btn btn-prim" type="submit" data-espera="Conciliando…">Conciliar</button>
+</form>
+{% endblock %}

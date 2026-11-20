@@ -1,0 +1,124 @@
+{% extends 'base.html' %}
+{% block titulo %}Revisión del cierre{% endblock %}
+{% macro post_form(accion, nf, texto, clase='btn-prim', idt='') %}
+<form method="post" action="/borrador/{{ bid }}/{{ accion }}" class="en-linea">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="factura" value="{{ nf }}">
+  {% if idt %}<input type="hidden" name="id_transaccion" value="{{ idt }}">{% endif %}
+  <button class="btn {{ clase }} btn-sm" type="submit">{{ texto }}</button>
+</form>
+{% endmacro %}
+{% block contenido %}
+<div class="encabezado">
+  <h1>Revisión del cierre del {{ t.fecha_cierre | fecha }}</h1>
+  <a class="btn btn-sec" href="/nuevo">Volver a cargar archivos</a>
+</div>
+<p class="ayuda">Caja {{ est.caja or '-' }} · Archivos: {{ est.nombres_subidos.movimiento }} y {{ est.nombres_subidos.banco }}</p>
+
+{% if ev.nivel == 'verde' %}
+<div class="banner banner-verde" role="status"><strong>CUADRA</strong> — puede presentar su cierre</div>
+{% elif ev.nivel == 'ambar' %}
+<div class="banner banner-ambar" role="status"><strong>PENDIENTE DE CONFIRMACIÓN</strong> — confirme las coincidencias marcadas</div>
+{% else %}
+<div class="banner banner-rojo" role="alert"><strong>NO CUADRA</strong> — no puede presentar.
+  {% if t['Estado QR'] == 'NO CUADRA' %}Revise las facturas sin respaldo y averigüe qué pasó (pago no recibido, factura mal registrada, etc.).{% endif %}
+  {% for r in ev.razones %}<div class="banner-razon">{{ r }}</div>{% endfor %}</div>
+{% endif %}
+
+<section class="kpis">
+  <div class="kpi"><span class="kpi-t">QR BANECO registrado</span><span class="kpi-v">{{ t['QR registrado'] | bs }}</span><span class="kpi-s">{{ t.n_facturas_qr }} facturas</span></div>
+  <div class="kpi"><span class="kpi-t">QR BANECO conciliado</span><span class="kpi-v">{{ qr_conc | bs }}</span><span class="kpi-s">automático {{ t['QR conciliado automático (CONCILIADA)'] | bs }} + confirmado {{ t['QR confirmado por cajero'] | bs }}</span></div>
+  <div class="kpi {{ 'kpi-ok' if t['Diferencia QR'] | abs < 0.005 else 'kpi-mal' }}"><span class="kpi-t">Diferencia QR</span><span class="kpi-v">{{ t['Diferencia QR'] | bs }}</span><span class="kpi-s">{{ t['Estado QR'] }}</span></div>
+  <div class="kpi {{ 'kpi-ok' if t['Diferencia tarjeta (declarada - sistema)'] | abs < 0.005 else 'kpi-mal' }}"><span class="kpi-t">Tarjetas</span><span class="kpi-v">{{ t['Tarjeta declarada'] | bs }}</span><span class="kpi-s">declarado · sistema {{ t['Tarjeta según sistema'] | bs }}</span></div>
+  <div class="kpi kpi-total"><span class="kpi-t">Total del cierre</span><span class="kpi-v">{{ t['Total cierre'] | bs }}</span><span class="kpi-s">QR BANECO + tarjetas declaradas</span></div>
+</section>
+
+<h2>Facturas QR BANECO</h2>
+<div class="tabla-wrap">
+<table class="tabla tabla-fact">
+  <thead><tr><th>N° factura</th><th>Cliente / estudiante</th><th class="num">Monto (Bs)</th><th>Estado</th><th>Movimiento del banco</th><th>Acción</th></tr></thead>
+  <tbody>
+  {% for f in filas %}
+  <tr class="{{ 'fila-manual' if f.manual }}">
+    <td data-l="N° factura"><strong>{{ f.nf }}</strong><br><small>{{ f.hora | hora }}</small></td>
+    <td data-l="Cliente">{{ f.cliente }}<br><small>Estudiante: {{ f.estudiante }}</small></td>
+    <td data-l="Monto (Bs)" class="num">{{ f.monto | bs }}</td>
+    <td data-l="Estado">
+      {% if f.estado == 'CONCILIADA' %}<span class="insignia ins-verde">CONCILIADA</span>
+      {% elif f.estado == 'CONFIRMADA POR CAJERO' %}<span class="insignia ins-azul">CONFIRMADA POR USTED</span>
+      {% elif f.estado == 'POR CONFIRMAR' %}<span class="insignia ins-ambar">POR CONFIRMAR</span>
+      {% elif f.estado == 'AMBIGUO' %}<span class="insignia ins-ambar">AMBIGUO</span>
+      {% else %}<span class="insignia ins-rojo">{{ f.estado }}</span>{% endif %}
+    </td>
+    <td data-l="Movimiento del banco">
+      {% if f.id %}<span class="mono">{{ f.id }}</span><br>{{ f.titular }}<br><small>{{ f.hora_banco | hora }}</small>{% else %}<span class="tenue">—</span>{% endif %}
+    </td>
+    <td data-l="Acción" class="acciones">
+      {% if f.estado == 'POR CONFIRMAR' %}
+        <div class="comparar"><div><small>Titular del banco</small><br><strong>{{ f.titular }}</strong></div>
+        <div><small>Razón social / estudiante</small><br><strong>{{ f.cliente }}</strong><br>{{ f.estudiante }}</div></div>
+        {{ post_form('confirmar', f.nf, 'Sí, corresponde') }}
+      {% elif f.manual %}
+        {{ post_form('deshacer', f.nf, 'Deshacer', 'btn-sec') }}
+      {% elif f.estado in ('SIN RESPALDO', 'AMBIGUO') %}
+        <details class="desplegable"><summary>{{ 'Elegir movimiento del banco' if f.candidatos else 'Sin movimientos posibles' }}</summary>
+        {% if f.candidatos %}
+          <p class="ayuda">Movimientos del banco con el mismo monto y el mismo día, sin usar:</p>
+          <ul class="cands">{% for c in f.candidatos %}
+            <li><div><strong>{{ c.titular }}</strong><br><small>{{ c.hora | hora }} · ID <span class="mono">{{ c.id }}</span></small></div>
+            {{ post_form('asignar', f.nf, 'Asignar', 'btn-prim', c.id) }}</li>{% endfor %}</ul>
+        {% else %}<p class="ayuda">No hay ningún movimiento del banco con ese monto ese día. Averigüe qué pasó (pago no recibido, factura mal registrada, etc.).</p>{% endif %}
+        </details>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<details class="seccion"><summary>Depósitos de otros cajeros <span class="cuenta">{{ ajenos | length }}</span> <small>(solo informativo)</small></summary>
+  {% if ajenos %}<div class="tabla-wrap"><table class="tabla"><thead><tr><th>ID TRANSACCION</th><th>Titular</th><th>Fecha / hora</th><th class="num">Monto (Bs)</th></tr></thead><tbody>
+  {% for m in ajenos %}<tr><td class="mono">{{ m['ID TRANSACCION'] }}</td><td>{{ m['TITULAR ORIGEN'] }}</td><td>{{ m['FECHA / HORA'] | fecha_hora }}</td><td class="num">{{ m['MONTO'] | bs }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="ayuda">No hay depósitos de otros cajeros en el reporte.</p>{% endif %}
+</details>
+<details class="seccion"><summary>Facturas anuladas <span class="cuenta">{{ anuladas | length }}</span></summary>
+  {% if anuladas %}<div class="tabla-wrap"><table class="tabla"><thead><tr><th>N° factura</th><th>Cliente</th><th class="num">Monto (Bs)</th><th>Estado</th></tr></thead><tbody>
+  {% for a in anuladas %}<tr><td>{{ a['Número Factura'] }}</td><td>{{ a['Razon Social'] }}</td><td class="num">{{ a['Monto'] | bs }}</td><td>{{ a['estado_conciliacion'] }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="ayuda">No hay facturas anuladas.</p>{% endif %}
+</details>
+<details class="seccion"><summary>Tarjetas <span class="cuenta">{{ tarjetas | length }}</span> <small>(facturas TARJETA del sistema: Bs {{ t['Tarjeta según sistema'] | bs }})</small></summary>
+  {% if tarjetas %}<div class="tabla-wrap"><table class="tabla"><thead><tr><th>N° factura</th><th>Cliente</th><th class="num">Monto (Bs)</th></tr></thead><tbody>
+  {% for a in tarjetas %}<tr><td>{{ a['Número Factura'] }}</td><td>{{ a['Razon Social'] }}</td><td class="num">{{ a['Monto'] | bs }}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="ayuda">No hay facturas con tarjeta.</p>{% endif %}
+</details>
+<details class="seccion"><summary>Alertas <span class="cuenta">{{ alertas | length }}</span></summary>
+  {% if alertas %}<ul class="alertas">{% for a in alertas %}<li><span class="insignia {{ 'ins-ambar' if a.nivel == 'ALERTA' else 'ins-gris' }}">{{ a.nivel }}</span> {{ a.detalle }}</li>{% endfor %}</ul>
+  {% else %}<p class="ayuda">Sin alertas.</p>{% endif %}
+</details>
+
+<section class="tarjeta presentar">
+  <h2>Presentar el cierre</h2>
+  {% if ev.presentable %}
+    <p>Al presentar, el cierre queda guardado y ya no podrá modificarse.</p>
+    <button class="btn btn-prim" type="button" data-abrir="dlg-presentar">Presentar cierre</button>
+  {% else %}
+    <button class="btn btn-prim" type="button" disabled aria-disabled="true">Presentar cierre</button>
+    <ul class="razones">{% for r in ev.razones %}<li>{{ r }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+
+<dialog id="dlg-presentar">
+  <form method="post" action="/borrador/{{ bid }}/presentar">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Confirmar presentación</h2>
+    <p>Total del cierre: <strong>Bs {{ t['Total cierre'] | bs }}</strong> (QR BANECO {{ t['QR registrado'] | bs }} + tarjetas {{ t['Tarjeta declarada'] | bs }}).</p>
+    {% if existente %}
+      <div class="aviso aviso-info">Ya presentó el cierre {{ existente.correlativo }} para esta fecha. Este nuevo cierre lo <strong>reemplazará</strong>.</div>
+      <label for="motivo">Motivo del reemplazo (obligatorio)</label>
+      <textarea id="motivo" name="motivo" rows="3" required></textarea>
+    {% endif %}
+    <label class="check"><input type="checkbox" name="declaro" value="1" required> Declaro que el cierre es correcto</label>
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-prim" data-espera="Presentando…">Presentar</button></div>
+  </form>
+</dialog>
+{% endblock %}
