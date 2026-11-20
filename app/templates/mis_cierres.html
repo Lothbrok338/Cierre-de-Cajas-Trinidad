@@ -3,7 +3,7 @@
 {% block contenido %}
 <div class="encabezado">
   <h1>{{ 'Cierres presentados' if todos else 'Mis cierres' }}</h1>
-  {% if not todos %}<a class="btn btn-prim" href="/nuevo">Nuevo cierre</a>{% endif %}
+  {% if user.rol in ('cajero', 'superadmin') %}<a class="btn btn-prim" href="/nuevo">Nuevo cierre</a>{% endif %}
 </div>
 {% if todos %}
 <form method="get" action="/" class="filtros" aria-label="Filtrar cierres">

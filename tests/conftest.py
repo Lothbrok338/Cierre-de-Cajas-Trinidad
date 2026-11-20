@@ -8,8 +8,9 @@ USUARIOS = {
     'ana': {'nombre': 'Ana Prueba', 'rol': 'cajero', 'clave_hash': hash_clave('clave-ana-1', 1000)},
     'beto': {'nombre': 'Beto Prueba', 'rol': 'cajero', 'clave_hash': hash_clave('clave-beto-1', 1000)},
     'ing': {'nombre': 'Ingresos Prueba', 'rol': 'ingresos', 'clave_hash': hash_clave('clave-ing-1', 1000)},
+    'sup': {'nombre': 'Super Prueba', 'rol': 'superadmin', 'clave_hash': hash_clave('clave-sup-1', 1000)},
 }
-CLAVES = {'ana': 'clave-ana-1', 'beto': 'clave-beto-1', 'ing': 'clave-ing-1'}
+CLAVES = {'ana': 'clave-ana-1', 'beto': 'clave-beto-1', 'ing': 'clave-ing-1', 'sup': 'clave-sup-1'}
 
 
 @pytest.fixture

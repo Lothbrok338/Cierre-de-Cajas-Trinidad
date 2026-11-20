@@ -35,6 +35,23 @@ CREATE TABLE IF NOT EXISTS cierre_ci (
   factura TEXT, banco TEXT NOT NULL, codigo TEXT NOT NULL, monto REAL
 );
 CREATE INDEX IF NOT EXISTS ix_ci_bc ON cierre_ci(banco, codigo);
+CREATE TABLE IF NOT EXISTS usuarios (
+  usuario TEXT PRIMARY KEY,
+  nombre TEXT NOT NULL,
+  rol TEXT NOT NULL,
+  clave_hash TEXT NOT NULL,
+  activo INTEGER NOT NULL DEFAULT 1,
+  creado_en TEXT NOT NULL,
+  actualizado_en TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS revisiones_historial (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cierre_id INTEGER NOT NULL REFERENCES cierres(id),
+  momento TEXT NOT NULL, usuario TEXT, accion TEXT NOT NULL,
+  estado_anterior TEXT, estado_nuevo TEXT, observacion TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_rh_cierre ON revisiones_historial(cierre_id);
+CREATE INDEX IF NOT EXISTS ix_aud_momento ON auditoria(momento);
 """
 
 
@@ -55,7 +72,7 @@ MIGRACIONES = [
     ('cierres', 'revisado_en', 'TEXT'),
     ('cierres', 'observacion_revision', 'TEXT'),
 ]
-VERSION_ESQUEMA = 2
+VERSION_ESQUEMA = 3
 
 
 def migrar(con):
@@ -66,6 +83,12 @@ def migrar(con):
             try: con.execute(f'ALTER TABLE {tabla} ADD COLUMN {col} {definicion}')
             except sqlite3.OperationalError as e:
                 if 'duplicate column' not in str(e).lower(): raise    # otro proceso la agrego antes
+    # v3: las revisiones ya hechas (v2) pasan al historial, una sola vez por cierre
+    con.execute("INSERT INTO revisiones_historial (cierre_id, momento, usuario, accion, estado_anterior, estado_nuevo, observacion) "
+                "SELECT id, revisado_en, revisado_por, CASE estado_revision WHEN 'CONFORME' THEN 'aprobar' ELSE 'rechazar' END, "
+                "'PENDIENTE DE REVISIÓN', CASE estado_revision WHEN 'CONFORME' THEN 'CONFORME' ELSE 'RECHAZADO' END, observacion_revision FROM cierres "
+                "WHERE revisado_por IS NOT NULL "
+                "AND id NOT IN (SELECT cierre_id FROM revisiones_historial)")
     con.execute(f'PRAGMA user_version = {VERSION_ESQUEMA}')
 
 

@@ -20,12 +20,14 @@
     </a>
     {% if user %}
     <nav class="nav" aria-label="Principal">
-      <a href="/">{{ 'Cierres' if user.rol != 'cajero' else 'Mis cierres' }}</a>
-      {% if user.rol == 'cajero' %}<a href="/nuevo">Nuevo cierre</a>{% endif %}
+      <a href="/">{{ 'Mis cierres' if user.rol == 'cajero' else 'Cierres' }}</a>
+      {% if user.rol in ('cajero', 'superadmin') %}<a href="/nuevo">Nuevo cierre</a>{% endif %}
+      {% if user.rol == 'superadmin' %}<a href="/admin/usuarios">Usuarios</a><a href="/admin/auditoria">Auditoría</a>{% endif %}
+      <a href="/cuenta">Mi cuenta</a>
     </nav>
     <form method="post" action="/logout" class="sesion">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <span class="quien">{{ user.nombre }} <small>({{ user.rol }})</small></span>
+      <span class="quien">{{ user.nombre }} <small>({{ user.rol | rol_txt }})</small></span>
       <button class="btn btn-sec btn-sm" type="submit">Salir</button>
     </form>
     {% endif %}

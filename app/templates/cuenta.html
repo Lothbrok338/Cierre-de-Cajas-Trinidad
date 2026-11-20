@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block titulo %}Mi cuenta{% endblock %}
+{% block contenido %}
+<h1>Mi cuenta</h1>
+<section class="tarjeta">
+  <dl class="datos">
+    <div><dt>Usuario</dt><dd>{{ user.usuario }}</dd></div>
+    <div><dt>Nombre</dt><dd>{{ user.nombre }}</dd></div>
+    <div><dt>Rol</dt><dd>{{ user.rol | rol_txt }}</dd></div>
+  </dl>
+</section>
+<section class="tarjeta formulario">
+  <h2>Cambiar mi clave</h2>
+  {% if error %}<div class="aviso aviso-error" role="alert">{{ error }}</div>{% endif %}
+  <form method="post" action="/cuenta/clave" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="campo"><label for="actual">Clave actual</label><input id="actual" name="actual" type="password" required autocomplete="current-password"></div>
+    <div class="campo"><label for="nueva">Clave nueva <small>(mínimo {{ MIN_CLAVE }} caracteres)</small></label><input id="nueva" name="nueva" type="password" required minlength="{{ MIN_CLAVE }}" autocomplete="new-password"></div>
+    <div class="campo"><label for="nueva2">Repita la clave nueva</label><input id="nueva2" name="nueva2" type="password" required minlength="{{ MIN_CLAVE }}" autocomplete="new-password"></div>
+    <button class="btn btn-prim" type="submit">Cambiar clave</button>
+  </form>
+</section>
+{% endblock %}

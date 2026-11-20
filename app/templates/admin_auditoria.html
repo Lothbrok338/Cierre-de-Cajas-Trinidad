@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block titulo %}Auditoría{% endblock %}
+{% block contenido %}
+<div class="encabezado"><h1>Auditoría</h1><small>{{ total }} registro{{ '' if total == 1 else 's' }}</small></div>
+<form method="get" action="/admin/auditoria" class="filtros" aria-label="Filtrar auditoría">
+  <div><label for="a-usuario">Usuario</label><input id="a-usuario" name="usuario" type="text" value="{{ f.usuario }}"></div>
+  <div><label for="a-accion">Acción</label>
+    <select id="a-accion" name="accion"><option value="">Todas</option>{% for a in acciones %}<option value="{{ a }}" {{ 'selected' if a == f.accion }}>{{ a }}</option>{% endfor %}</select></div>
+  <div><label for="a-desde">Desde</label><input id="a-desde" name="desde" type="date" value="{{ f.desde }}"></div>
+  <div><label for="a-hasta">Hasta</label><input id="a-hasta" name="hasta" type="date" value="{{ f.hasta }}"></div>
+  <div class="filtros-bt"><button class="btn btn-prim btn-sm" type="submit">Filtrar</button>{% if base %} <a class="btn btn-sec btn-sm" href="/admin/auditoria">Quitar filtros</a>{% endif %}</div>
+</form>
+{% if filas %}
+<div class="tabla-wrap"><table class="tabla">
+  <thead><tr><th>Momento</th><th>Usuario</th><th>Acción</th><th>Detalle</th></tr></thead>
+  <tbody>{% for r in filas %}<tr>
+    <td data-l="Momento" class="num">{{ r.momento | fecha_hora }}</td><td data-l="Usuario">{{ r.usuario or '-' }}</td>
+    <td data-l="Acción"><code>{{ r.accion }}</code></td><td data-l="Detalle" class="mono detalle-json">{{ r.detalle_json if r.detalle_json and r.detalle_json != '{}' else '' }}</td></tr>{% endfor %}</tbody>
+</table></div>
+<nav class="paginacion" aria-label="Paginación">
+  {% if pagina > 1 %}<a class="btn btn-sec btn-sm" href="/admin/auditoria?{{ base }}{{ '&' if base }}pagina={{ pagina - 1 }}">« Anterior</a>{% endif %}
+  <span>Página {{ pagina }} de {{ paginas }}</span>
+  {% if pagina < paginas %}<a class="btn btn-sec btn-sm" href="/admin/auditoria?{{ base }}{{ '&' if base }}pagina={{ pagina + 1 }}">Siguiente »</a>{% endif %}
+</nav>
+{% else %}
+<section class="tarjeta vacio"><p>No hay registros con esos filtros.</p></section>
+{% endif %}
+{% endblock %}

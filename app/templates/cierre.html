@@ -24,12 +24,30 @@
 <div class="aviso aviso-info">Pendiente de revisión por Ingresos. Mientras esté pendiente no puede modificarse.</div>
 {% endif %}
 
+{% if es_super and c.estado_revision in ('CONFORME', 'RECHAZADO') %}
+<section class="tarjeta revision-ing" aria-label="Revertir revisión">
+  <h2>Revertir revisión <small>(solo superadmin)</small></h2>
+  <p class="ayuda">El cierre volverá a PENDIENTE DE REVISIÓN. La revisión actual queda guardada en el historial y en la auditoría.</p>
+  <button class="btn btn-sec" type="button" data-abrir="dlg-revertir">Revertir revisión</button>
+</section>
+<dialog id="dlg-revertir">
+  <form method="post" action="/cierres/{{ c.id }}/revertir">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Revertir la revisión de {{ c.correlativo }}</h2>
+    <p>Estado actual: <strong>{{ c.estado_revision }}</strong>. Pasará a <strong>PENDIENTE DE REVISIÓN</strong> y se borrará el revisor y la observación vigentes (se conservan en el historial).</p>
+    <label for="mot-rev">Motivo (obligatorio, mínimo {{ MIN_OBS }} caracteres)</label>
+    <textarea id="mot-rev" name="motivo" rows="4" required minlength="{{ MIN_OBS }}"></textarea>
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-peligro" data-espera="Guardando…">Revertir</button></div>
+  </form>
+</dialog>
+{% endif %}
+
 {% if es_ingresos and c.estado_revision == 'PENDIENTE DE REVISIÓN' %}
 <section class="tarjeta revision-ing" aria-label="Revisión por Ingresos">
   <h2>Revisión por Ingresos</h2>
   <p class="ayuda">Revise el cuadro y los archivos. La decisión queda registrada con su usuario y la fecha.</p>
   <div class="botones-izq">
-    <button class="btn btn-prim" type="button" data-abrir="dlg-aprobar">Aprobar (Conforme)</button>
+    <button class="btn btn-ok" type="button" data-abrir="dlg-aprobar">Aprobar (Conforme)</button>
     <button class="btn btn-peligro" type="button" data-abrir="dlg-rechazar">Rechazar</button>
   </div>
 </section>
@@ -39,7 +57,7 @@
     <h2>Aprobar el cierre {{ c.correlativo }}</h2>
     <p>El cierre quedará <strong>CONFORME</strong> y ya no podrá modificarse.</p>
     <label for="obs-ap">Observación (opcional)</label><textarea id="obs-ap" name="observacion" rows="2"></textarea>
-    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-prim" data-espera="Guardando…">Aprobar</button></div>
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-ok" data-espera="Guardando…">Aprobar</button></div>
   </form>
 </dialog>
 <dialog id="dlg-rechazar">
@@ -87,6 +105,19 @@
   <thead><tr><th>N° factura</th><th>Cliente</th><th class="num">Monto (Bs)</th><th>Banco</th><th>Código de asignación</th></tr></thead>
   <tbody>{% for r in ci %}<tr><td data-l="N° factura">{{ r.factura }}</td><td data-l="Cliente">{{ r.razon_social }}</td><td data-l="Monto (Bs)" class="num">{{ r.monto | bs }}</td><td data-l="Banco">{{ r.banco }}</td><td data-l="Código" class="mono">{{ r.codigo }}</td></tr>{% endfor %}</tbody>
 </table></div>
+{% endif %}
+{% if es_ingresos %}
+<h2>Historial de revisiones</h2>
+{% if historial %}
+<div class="tabla-wrap"><table class="tabla">
+  <thead><tr><th>Momento</th><th>Usuario</th><th>Acción</th><th>Estado</th><th>Observación / motivo</th></tr></thead>
+  <tbody>{% for h in historial %}<tr>
+    <td data-l="Momento">{{ h.momento | fecha_hora }}</td><td data-l="Usuario">{{ h.usuario }}</td>
+    <td data-l="Acción">{{ {'aprobar': 'Aprobó', 'rechazar': 'Rechazó', 'revertir': 'Revirtió la revisión'}.get(h.accion, h.accion) }}</td>
+    <td data-l="Estado">{{ h.estado_anterior }} → <strong>{{ h.estado_nuevo }}</strong></td>
+    <td data-l="Observación">{{ h.observacion or '-' }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% else %}<p class="ayuda">Todavía no hay revisiones registradas para este cierre.</p>{% endif %}
 {% endif %}
 <h2>Archivos</h2>
 <ul class="archivos">

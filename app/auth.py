@@ -1,8 +1,11 @@
 """Autenticacion provisional (hasta integrar Microsoft Entra ID).
-APP_USERS = JSON {"usuario": {"nombre": "...", "rol": "cajero"|"ingresos", "clave_hash": "pbkdf2_sha256$iter$salt$hash"}}"""
+Los usuarios viven en la tabla `usuarios` (ver servicio.Almacen). APP_USERS solo SIEMBRA usuarios al arrancar:
+APP_USERS = JSON {"usuario": {"nombre": "...", "rol": "superadmin"|"ingresos"|"cajero", "clave_hash": "pbkdf2_sha256$iter$salt$hash",
+                              "forzar": false}}   (forzar=true vuelve a aplicar esa entrada aunque el usuario ya exista)"""
 import base64, hashlib, hmac, json, os, secrets, time
 
-ROLES = ('cajero', 'ingresos')
+ROLES = ('superadmin', 'ingresos', 'cajero')
+MIN_CLAVE = 8
 ITER_DEFECTO = 600_000
 
 
@@ -33,7 +36,9 @@ def cargar_usuarios(texto):
     out = {}
     for u, d in data.items():
         if not isinstance(d, dict) or d.get('rol') not in ROLES or not d.get('clave_hash'): continue
-        out[str(u)] = {'nombre': str(d.get('nombre') or u), 'rol': d['rol'], 'clave_hash': d['clave_hash']}
+        k = str(u).strip().lower()
+        if not k: continue
+        out[k] = {'nombre': str(d.get('nombre') or u), 'rol': d['rol'], 'clave_hash': d['clave_hash'], 'forzar': d.get('forzar') is True}
     return out or None
 
 
@@ -55,9 +60,18 @@ class LimiteIntentos:
     def limpiar(self, u): self.fallos.pop(u, None)
 
 
-def autenticar(usuarios, usuario, clave):
-    """Devuelve el dict de usuario si las credenciales son validas, si no None (tiempo similar en ambos casos)."""
-    u = usuarios.get(usuario)
+def autenticar(buscar, usuario, clave):
+    """`buscar(usuario_en_minusculas)` devuelve el registro (dict/Row con clave_hash y activo) o None.
+    Devuelve ese registro si las credenciales son validas y el usuario esta activo, si no None (tiempo similar en todos los casos)."""
+    u = buscar(usuario.strip().lower())
     if u is None:
         verificar_clave(clave, _HASH_FALSO); return None
-    return u if verificar_clave(clave, u['clave_hash']) else None
+    ok = verificar_clave(clave, u['clave_hash'])
+    return u if ok and u['activo'] else None
+
+
+def validar_clave_nueva(clave, confirmacion):
+    """Mensaje de error o None."""
+    if clave != confirmacion: return 'La confirmación de la clave no coincide.'
+    if len(clave) < MIN_CLAVE: return f'La clave debe tener al menos {MIN_CLAVE} caracteres.'
+    return None

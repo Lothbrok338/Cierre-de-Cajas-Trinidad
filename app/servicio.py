@@ -1,8 +1,8 @@
 """Logica de borradores, evaluacion del cierre y presentacion (versiones inmutables)."""
-import hashlib, json, os, re, shutil, uuid
+import hashlib, json, os, re, shutil, sqlite3, uuid
 from datetime import datetime
 
-from . import catalogo, db, motor
+from . import auth, catalogo, db, motor
 from .formato import fecha
 
 MAX_BYTES = 10 * 1024 * 1024
@@ -357,6 +357,8 @@ class Almacen:
                 raise ErrorUsuario(f"El cierre {c['correlativo']} está {c['estado_revision']}: solo se puede revisar un cierre PENDIENTE DE REVISIÓN.")
             con.execute('UPDATE cierres SET estado_revision=?, revisado_por=?, revisado_en=?, observacion_revision=? WHERE id=?',
                         (decision, revisor, momento, obs or None, cid))
+            con.execute('INSERT INTO revisiones_historial (cierre_id, momento, usuario, accion, estado_anterior, estado_nuevo, observacion) VALUES (?,?,?,?,?,?,?)',
+                        (cid, momento, revisor, 'aprobar' if decision == ESTADO_CONFORME else 'rechazar', c['estado_revision'], decision, obs or None))
             con.execute('INSERT INTO auditoria (momento, usuario, accion, detalle_json) VALUES (?,?,?,?)',
                         (momento, revisor, 'cierre_aprobado' if decision == ESTADO_CONFORME else 'cierre_rechazado',
                          json.dumps({'correlativo': c['correlativo'], 'cierre': cid, 'estado_anterior': c['estado_revision'], 'observacion': obs or None}, ensure_ascii=False)))
@@ -370,6 +372,155 @@ class Almacen:
         except Exception as e:   # la revision ya quedo registrada; el PDF original sigue disponible
             self.auditar(revisor, 'pdf_revision_error', {'cierre': cid, 'error': str(e)[:200]})
         return self.cierre(cid)
+
+    # ---------------- revertir revision (superadmin) ----------------
+    def revertir(self, cid, usuario, motivo):
+        """Superadmin: un cierre CONFORME o RECHAZADO vuelve a PENDIENTE DE REVISIÓN. Motivo obligatorio; el historial se conserva."""
+        mot = ' '.join((motivo or '').split())
+        if len(mot) < MIN_OBSERVACION:
+            raise ErrorUsuario(f'Para revertir la revisión escriba un motivo de al menos {MIN_OBSERVACION} caracteres.')
+        con = self.con(); momento = db.ahora()
+        try:
+            con.execute('BEGIN IMMEDIATE')
+            c = con.execute('SELECT * FROM cierres WHERE id=?', (cid,)).fetchone()
+            if c is None: raise ErrorUsuario('No se encontró el cierre.')
+            if c['estado_revision'] == ESTADO_REEMPLAZADO:
+                raise ErrorUsuario(f"El cierre {c['correlativo']} está REEMPLAZADO: no se puede revertir su revisión.")
+            if c['estado_revision'] not in (ESTADO_CONFORME, ESTADO_RECHAZADO):
+                raise ErrorUsuario(f"El cierre {c['correlativo']} está {c['estado_revision']}: solo se puede revertir un cierre CONFORME o RECHAZADO.")
+            con.execute('UPDATE cierres SET estado_revision=?, revisado_por=NULL, revisado_en=NULL, observacion_revision=NULL WHERE id=?', (ESTADO_INICIAL, cid))
+            con.execute('INSERT INTO revisiones_historial (cierre_id, momento, usuario, accion, estado_anterior, estado_nuevo, observacion) VALUES (?,?,?,?,?,?,?)',
+                        (cid, momento, usuario, 'revertir', c['estado_revision'], ESTADO_INICIAL, mot))
+            con.execute('INSERT INTO auditoria (momento, usuario, accion, detalle_json) VALUES (?,?,?,?)',
+                        (momento, usuario, 'revision_revertida',
+                         json.dumps({'correlativo': c['correlativo'], 'cierre': cid, 'estado_anterior': c['estado_revision'], 'motivo': mot,
+                                     'revisado_por_anterior': c['revisado_por'], 'revisado_en_anterior': c['revisado_en'],
+                                     'observacion_anterior': c['observacion_revision']}, ensure_ascii=False)))
+            con.execute('COMMIT')
+        except BaseException:
+            try: con.execute('ROLLBACK')
+            except Exception: pass
+            raise
+        finally: con.close()
+        try: self.regenerar_pdf(cid)
+        except Exception as e:
+            self.auditar(usuario, 'pdf_revision_error', {'cierre': cid, 'error': str(e)[:200]})
+        return self.cierre(cid)
+
+    def historial(self, cid):
+        con = self.con()
+        try: return con.execute('SELECT * FROM revisiones_historial WHERE cierre_id=? ORDER BY id', (cid,)).fetchall()
+        finally: con.close()
+
+    # ---------------- usuarios ----------------
+    def sembrar_usuarios(self, entradas):
+        """Siembra desde APP_USERS solo los usuarios que no existen (no pisa cambios hechos en la UI), salvo entradas con forzar=true.
+        Devuelve (creados, forzados)."""
+        creados, forzados = [], []
+        con = self.con(); t = db.ahora()
+        try:
+            for u, d in (entradas or {}).items():
+                ex = con.execute('SELECT 1 FROM usuarios WHERE usuario=?', (u,)).fetchone()
+                if ex is None:
+                    con.execute('INSERT OR IGNORE INTO usuarios (usuario, nombre, rol, clave_hash, activo, creado_en, actualizado_en) VALUES (?,?,?,?,1,?,?)',
+                                (u, d['nombre'], d['rol'], d['clave_hash'], t, t)); creados.append(u)
+                elif d.get('forzar'):
+                    con.execute('UPDATE usuarios SET nombre=?, rol=?, clave_hash=?, activo=1, actualizado_en=? WHERE usuario=?',
+                                (d['nombre'], d['rol'], d['clave_hash'], t, u)); forzados.append(u)
+        finally: con.close()
+        for u in creados: self.auditar('sistema', 'usuario_sembrado', {'usuario': u, 'rol': entradas[u]['rol']})
+        for u in forzados: self.auditar('sistema', 'usuario_forzado_desde_env', {'usuario': u, 'rol': entradas[u]['rol']})
+        return creados, forzados
+
+    def usuario_get(self, usuario):
+        con = self.con()
+        try: return con.execute('SELECT * FROM usuarios WHERE usuario=?', ((usuario or '').strip().lower(),)).fetchone()
+        finally: con.close()
+
+    def usuarios(self):
+        con = self.con()
+        try: return con.execute('SELECT * FROM usuarios ORDER BY activo DESC, usuario').fetchall()
+        finally: con.close()
+
+    def hay_usuarios_activos(self):
+        con = self.con()
+        try: return con.execute('SELECT 1 FROM usuarios WHERE activo=1 LIMIT 1').fetchone() is not None
+        finally: con.close()
+
+    def usuario_crear(self, actor, usuario, nombre, rol, clave, clave2):
+        u = (usuario or '').strip().lower(); n = ' '.join((nombre or '').split())
+        if not re.fullmatch(r'[a-z0-9._-]{3,32}', u): raise ErrorUsuario('El usuario debe tener de 3 a 32 caracteres: letras, números, punto, guion o guion bajo.')
+        if not n or len(n) > 80: raise ErrorUsuario('Escriba el nombre completo (hasta 80 caracteres).')
+        if rol not in auth.ROLES: raise ErrorUsuario('Rol no válido.')
+        err = auth.validar_clave_nueva(clave or '', clave2 or '')
+        if err: raise ErrorUsuario(err)
+        t = db.ahora(); con = self.con()
+        try:
+            try:
+                con.execute('INSERT INTO usuarios (usuario, nombre, rol, clave_hash, activo, creado_en, actualizado_en) VALUES (?,?,?,?,1,?,?)',
+                            (u, n, rol, auth.hash_clave(clave), t, t))
+            except sqlite3.IntegrityError: raise ErrorUsuario(f'El usuario «{u}» ya existe.')
+        finally: con.close()
+        self.auditar(actor, 'usuario_creado', {'usuario': u, 'nombre': n, 'rol': rol})
+
+    def _cambiar_usuario(self, actor, usuario, accion, aplicar, detalle):
+        """Aplica un cambio sobre un usuario garantizando que siempre quede al menos un superadmin activo."""
+        con = self.con(); t = db.ahora()
+        try:
+            con.execute('BEGIN IMMEDIATE')
+            r = con.execute('SELECT * FROM usuarios WHERE usuario=?', (usuario,)).fetchone()
+            if r is None: raise ErrorUsuario('No existe ese usuario.')
+            cambios = aplicar(r)
+            sets = ', '.join(f'{k}=?' for k in cambios) + ', actualizado_en=?'
+            con.execute(f'UPDATE usuarios SET {sets} WHERE usuario=?', [*cambios.values(), t, usuario])
+            if not con.execute("SELECT 1 FROM usuarios WHERE rol='superadmin' AND activo=1").fetchone():
+                raise ErrorUsuario('Debe quedar al menos un superadministrador activo; no se puede dejar el sistema sin uno.')
+            con.execute('INSERT INTO auditoria (momento, usuario, accion, detalle_json) VALUES (?,?,?,?)',
+                        (t, actor, accion, json.dumps({'usuario': usuario, **detalle(r, cambios)}, ensure_ascii=False)))
+            con.execute('COMMIT')
+        except BaseException:
+            try: con.execute('ROLLBACK')
+            except Exception: pass
+            raise
+        finally: con.close()
+
+    def usuario_cambiar_rol(self, actor, usuario, rol):
+        if rol not in auth.ROLES: raise ErrorUsuario('Rol no válido.')
+        self._cambiar_usuario(actor, usuario, 'usuario_rol_cambiado', lambda r: {'rol': rol}, lambda r, c: {'rol_anterior': r['rol'], 'rol_nuevo': rol})
+
+    def usuario_set_activo(self, actor, usuario, activo):
+        a = 1 if activo else 0
+        self._cambiar_usuario(actor, usuario, 'usuario_activado' if a else 'usuario_desactivado', lambda r: {'activo': a}, lambda r, c: {})
+
+    def usuario_reset_clave(self, actor, usuario, clave, clave2):
+        err = auth.validar_clave_nueva(clave or '', clave2 or '')
+        if err: raise ErrorUsuario(err)
+        self._cambiar_usuario(actor, usuario, 'usuario_clave_restablecida', lambda r: {'clave_hash': auth.hash_clave(clave)}, lambda r, c: {})
+
+    def cambiar_clave_propia(self, usuario, actual, nueva, nueva2):
+        r = self.usuario_get(usuario)
+        if r is None or not auth.verificar_clave(actual or '', r['clave_hash']): raise ErrorUsuario('La clave actual no es correcta.')
+        err = auth.validar_clave_nueva(nueva or '', nueva2 or '')
+        if err: raise ErrorUsuario(err)
+        if nueva == actual: raise ErrorUsuario('La clave nueva debe ser distinta de la actual.')
+        self._cambiar_usuario(usuario, usuario, 'clave_cambiada', lambda r: {'clave_hash': auth.hash_clave(nueva)}, lambda r, c: {})
+
+    # ---------------- auditoria (lectura) ----------------
+    def auditoria(self, usuario=None, accion=None, desde=None, hasta=None, pagina=1, por_pagina=50):
+        w, a = [], []
+        if usuario: w.append("LOWER(COALESCE(usuario,'')) LIKE ? ESCAPE '\\'"); a.append('%' + usuario.lower().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%')
+        if accion: w.append('accion=?'); a.append(accion)
+        if desde: w.append('substr(momento,1,10)>=?'); a.append(desde)
+        if hasta: w.append('substr(momento,1,10)<=?'); a.append(hasta)
+        where = (' WHERE ' + ' AND '.join(w)) if w else ''
+        con = self.con()
+        try:
+            total = con.execute('SELECT COUNT(*) FROM auditoria' + where, a).fetchone()[0]
+            paginas = max(1, -(-total // por_pagina)); pagina = min(max(1, pagina), paginas)
+            filas = con.execute('SELECT * FROM auditoria' + where + ' ORDER BY id DESC LIMIT ? OFFSET ?', [*a, por_pagina, (pagina - 1) * por_pagina]).fetchall()
+            acciones = [r[0] for r in con.execute('SELECT DISTINCT accion FROM auditoria ORDER BY accion')]
+        finally: con.close()
+        return {'filas': filas, 'total': total, 'pagina': pagina, 'paginas': paginas, 'acciones': acciones}
 
     def regenerar_pdf(self, cid):
         """PDF con el estado de revision (cierre_revision.pdf). El cierre.pdf original, inmutable, no se toca."""

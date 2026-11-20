@@ -1,5 +1,5 @@
 import logging, os, secrets, tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request, UploadFile, File
@@ -30,12 +30,13 @@ def create_app():
     app.add_middleware(SessionMiddleware, secret_key=secret, session_cookie='cierre_sesion', max_age=8 * 3600,
                        same_site='lax', https_only=seguro)
     app.state.almacen = Almacen(os.environ.get('DATA_DIR', './data'))
-    app.state.usuarios = auth.cargar_usuarios(os.environ.get('APP_USERS'))
+    app.state.almacen.sembrar_usuarios(auth.cargar_usuarios(os.environ.get('APP_USERS')))   # solo crea los que faltan (o los marcados forzar)
     app.state.limite = auth.LimiteIntentos()
     app.mount('/static', StaticFiles(directory=os.path.join(AQUI, 'static')), name='static')
     T = Jinja2Templates(directory=os.path.join(AQUI, 'templates'))
     T.env.filters.update(bs=formato.bs, fecha=formato.fecha, fecha_hora=formato.fecha_hora, hora=formato.hora)
-    T.env.globals.update(ESTADOS=servicio.ESTADOS_REVISION, BANCOS=catalogo.LISTA_BANCOS, BANCO_QR=catalogo.BANCO_QR, MIN_OBS=servicio.MIN_OBSERVACION)
+    T.env.filters['rol_txt'] = lambda r: {'superadmin': 'Superadmin', 'ingresos': 'Ingresos', 'cajero': 'Cajero'}.get(r, r)
+    T.env.globals.update(ROLES=auth.ROLES, MIN_CLAVE=auth.MIN_CLAVE, ESTADOS=servicio.ESTADOS_REVISION, BANCOS=catalogo.LISTA_BANCOS, BANCO_QR=catalogo.BANCO_QR, MIN_OBS=servicio.MIN_OBSERVACION)
     T.env.filters['clase_estado'] = lambda e: {'PENDIENTE DE REVISIÓN': 'ins-ambar', 'CONFORME': 'ins-verde', 'RECHAZADO': 'ins-rojo'}.get(e, 'ins-gris')
     alm: Almacen = app.state.almacen
 
@@ -50,22 +51,33 @@ def create_app():
     def flash(request, msg, tipo='info'): request.session['flash'] = {'msg': msg, 'tipo': tipo}
 
     def usuario(request):
+        """Usuario de la sesion, revalidado contra la base: un usuario desactivado o con otro rol lo nota de inmediato."""
         u = request.session.get('user')
         if not u: raise NoAutenticado()
+        r = alm.usuario_get(u.get('usuario'))
+        if r is None or not r['activo']:
+            request.session.clear(); raise NoAutenticado()
+        u = {'usuario': r['usuario'], 'nombre': r['nombre'], 'rol': r['rol']}
+        request.session['user'] = u
         return u
 
     def verificar_csrf(request, token):
         if not token or not secrets.compare_digest(token, request.session.get('csrf', '')):
             raise StarletteHTTPException(403, 'Sesión de formulario vencida. Recargue la página e intente de nuevo.')
 
-    def cajero(request):
+    def cajero(request):   # crear/corregir cierres: cajero y superadmin
         u = usuario(request)
-        if u['rol'] != 'cajero': raise StarletteHTTPException(403, 'Esta pantalla es solo para cajeros.')
+        if u['rol'] not in ('cajero', 'superadmin'): raise StarletteHTTPException(403, 'Esta pantalla es solo para cajeros.')
         return u
 
-    def ingresos(request):
+    def ingresos(request):   # revisar cierres: ingresos y superadmin
         u = usuario(request)
-        if u['rol'] != 'ingresos': raise StarletteHTTPException(403, 'Esta acción es solo para el personal de Ingresos.')
+        if u['rol'] not in ('ingresos', 'superadmin'): raise StarletteHTTPException(403, 'Esta acción es solo para el personal de Ingresos.')
+        return u
+
+    def superadmin(request):
+        u = usuario(request)
+        if u['rol'] != 'superadmin': raise StarletteHTTPException(403, 'Esta pantalla es solo para el superadministrador.')
         return u
 
     @app.exception_handler(NoAutenticado)
@@ -84,22 +96,22 @@ def create_app():
     @app.get('/login', response_class=HTMLResponse)
     def login_form(request: Request):
         if request.session.get('user'): return RedirectResponse('/', 303)
-        return render(request, 'login.html', configurado=bool(app.state.usuarios))
+        return render(request, 'login.html', configurado=alm.hay_usuarios_activos())
 
     @app.post('/login')
     def login(request: Request, usuario_: str = Form('', alias='usuario'), clave: str = Form(''), csrf: str = Form('')):
-        if not app.state.usuarios: return render(request, 'login.html', 200, configurado=False)
+        if not alm.hay_usuarios_activos(): return render(request, 'login.html', 200, configurado=False)
         verificar_csrf(request, csrf)
-        u = usuario_.strip()
+        u = usuario_.strip().lower()
         if app.state.limite.bloqueado(u):
             alm.auditar(u, 'login_bloqueado')
             return render(request, 'login.html', 429, configurado=True, error='Demasiados intentos. Espere unos minutos e intente de nuevo.')
-        d = auth.autenticar(app.state.usuarios, u, clave)
+        d = auth.autenticar(alm.usuario_get, u, clave)
         if not d:
             app.state.limite.registrar_fallo(u); alm.auditar(u, 'login_fallido')
             return render(request, 'login.html', 401, configurado=True, error='Usuario o clave incorrectos.')
         app.state.limite.limpiar(u); request.session.clear()
-        request.session['user'] = {'usuario': u, 'nombre': d['nombre'], 'rol': d['rol']}
+        request.session['user'] = {'usuario': d['usuario'], 'nombre': d['nombre'], 'rol': d['rol']}
         alm.auditar(u, 'login_ok')
         return RedirectResponse('/', 303)
 
@@ -119,7 +131,7 @@ def create_app():
             try: datetime.strptime(x, '%Y-%m-%d'); return x
             except ValueError: return ''
         desde, hasta = f_ok(q.get('desde', '')), f_ok(q.get('hasta', ''))
-        es_ing = u['rol'] != 'cajero'
+        es_ing = u['rol'] in ('ingresos', 'superadmin')
         filas = alm.cierres_de(None if es_ing else u['usuario'], estado or None, desde or None, hasta or None)
         return render(request, 'mis_cierres.html', cierres=filas, todos=es_ing, f_estado=estado, f_desde=desde, f_hasta=hasta,
                       filtrado=bool(estado or desde or hasta))
@@ -312,7 +324,7 @@ def create_app():
     # ---------------- detalle de cierre ----------------
     def cargar_cierre(request, cid):
         u = usuario(request); c = alm.cierre(cid)
-        if c is None or (u['rol'] != 'ingresos' and c['usuario'] != u['usuario']):
+        if c is None or (u['rol'] not in ('ingresos', 'superadmin') and c['usuario'] != u['usuario']):
             if c is not None: alm.auditar(u['usuario'], 'acceso_denegado', {'cierre': cid})
             raise StarletteHTTPException(404, 'No se encontró el cierre.')
         return u, c
@@ -336,7 +348,9 @@ def create_app():
         conc = (cj or {}).get('conceptos', [])
         return render(request, 'cierre.html', c=c, archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc,
                       total=servicio.total_conceptos(conc) if cj else None, ci=(cj or {}).get('comunicaciones_internas', []),
-                      es_ingresos=u['rol'] == 'ingresos', es_dueno=u['rol'] == 'cajero' and c['usuario'] == u['usuario'])
+                      es_ingresos=u['rol'] in ('ingresos', 'superadmin'), es_super=u['rol'] == 'superadmin',
+                      es_dueno=u['rol'] in ('cajero', 'superadmin') and c['usuario'] == u['usuario'],
+                      historial=alm.historial(cid) if u['rol'] in ('ingresos', 'superadmin') else [])
 
     @app.post('/cierres/{cid}/revisar')
     def revisar(request: Request, cid: int, decision: str = Form(''), observacion: str = Form(''), csrf: str = Form('')):
@@ -351,6 +365,18 @@ def create_app():
             alm.auditar(u['usuario'], 'revision_rechazada_por_sistema', {'cierre': cid, 'decision': decision, 'motivo': str(e)})
             flash(request, str(e), 'error'); return RedirectResponse(f'/cierres/{cid}', 303)
         flash(request, f"Cierre {c['correlativo']} marcado como {d}.", 'ok')
+        return RedirectResponse(f'/cierres/{cid}', 303)
+
+    @app.post('/cierres/{cid}/revertir')
+    def revertir(request: Request, cid: int, motivo: str = Form(''), csrf: str = Form('')):
+        u = superadmin(request); verificar_csrf(request, csrf)
+        c = alm.cierre(cid)
+        if c is None: raise StarletteHTTPException(404, 'No se encontró el cierre.')
+        try: alm.revertir(cid, u['usuario'], motivo)
+        except ErrorUsuario as e:
+            alm.auditar(u['usuario'], 'reversion_rechazada_por_sistema', {'cierre': cid, 'motivo': str(e)})
+            flash(request, str(e), 'error'); return RedirectResponse(f'/cierres/{cid}', 303)
+        flash(request, f"La revisión del cierre {c['correlativo']} se revirtió: vuelve a PENDIENTE DE REVISIÓN.", 'ok')
         return RedirectResponse(f'/cierres/{cid}', 303)
 
     @app.post('/cierres/{cid}/editar')
@@ -378,6 +404,73 @@ def create_app():
         mt = servicio.ARCHIVOS_CIERRE.get(nombre, 'application/vnd.ms-excel' if nombre.endswith('.xls') else servicio.ARCHIVOS_CIERRE['conciliacion.xlsx'])
         return FileResponse(ruta, media_type=mt, filename=f"{c['correlativo']}_{nombre}",
                             content_disposition_type='inline' if nombre in ('cierre.pdf', 'cierre_revision.pdf') else 'attachment')
+
+    # ---------------- mi cuenta ----------------
+    @app.get('/cuenta', response_class=HTMLResponse)
+    def cuenta(request: Request):
+        usuario(request); return render(request, 'cuenta.html')
+
+    @app.post('/cuenta/clave')
+    def cuenta_clave(request: Request, actual: str = Form(''), nueva: str = Form(''), nueva2: str = Form(''), csrf: str = Form('')):
+        u = usuario(request); verificar_csrf(request, csrf)
+        if app.state.limite.bloqueado(u['usuario']):
+            alm.auditar(u['usuario'], 'cambio_clave_bloqueado')
+            return render(request, 'cuenta.html', 429, error='Demasiados intentos. Espere unos minutos e intente de nuevo.')
+        try: alm.cambiar_clave_propia(u['usuario'], actual, nueva, nueva2)
+        except ErrorUsuario as e:
+            if 'actual' in str(e): app.state.limite.registrar_fallo(u['usuario'])
+            alm.auditar(u['usuario'], 'cambio_clave_fallido', {'motivo': str(e)})
+            return render(request, 'cuenta.html', 400, error=str(e))
+        app.state.limite.limpiar(u['usuario'])
+        flash(request, 'Su clave se cambió correctamente.', 'ok')
+        return RedirectResponse('/cuenta', 303)
+
+    # ---------------- administracion (superadmin) ----------------
+    @app.get('/admin/usuarios', response_class=HTMLResponse)
+    def admin_usuarios(request: Request):
+        u = superadmin(request)
+        return render(request, 'admin_usuarios.html', usuarios=alm.usuarios(), yo=u['usuario'])
+
+    def admin_accion(request, csrf, ejecutar, ok):
+        u = superadmin(request); verificar_csrf(request, csrf)
+        try: ejecutar(u['usuario']); flash(request, ok, 'ok')
+        except ErrorUsuario as e: flash(request, str(e), 'error')
+        return RedirectResponse('/admin/usuarios', 303)
+
+    @app.post('/admin/usuarios/crear')
+    def admin_crear(request: Request, usuario_: str = Form('', alias='usuario'), nombre: str = Form(''), rol: str = Form(''),
+                    clave: str = Form(''), clave2: str = Form(''), csrf: str = Form('')):
+        return admin_accion(request, csrf, lambda a: alm.usuario_crear(a, usuario_, nombre, rol, clave, clave2),
+                            f'Usuario «{usuario_.strip().lower()}» creado.')
+
+    @app.post('/admin/usuarios/{nombre_usuario}/rol')
+    def admin_rol(request: Request, nombre_usuario: str, rol: str = Form(''), csrf: str = Form('')):
+        return admin_accion(request, csrf, lambda a: alm.usuario_cambiar_rol(a, nombre_usuario, rol), f'Rol de «{nombre_usuario}» actualizado.')
+
+    @app.post('/admin/usuarios/{nombre_usuario}/activo')
+    def admin_activo(request: Request, nombre_usuario: str, activo: str = Form(''), csrf: str = Form('')):
+        on = activo == '1'
+        return admin_accion(request, csrf, lambda a: alm.usuario_set_activo(a, nombre_usuario, on),
+                            f'Usuario «{nombre_usuario}» {"activado" if on else "desactivado"}.')
+
+    @app.post('/admin/usuarios/{nombre_usuario}/clave')
+    def admin_clave(request: Request, nombre_usuario: str, clave: str = Form(''), clave2: str = Form(''), csrf: str = Form('')):
+        def hacer(a):
+            alm.usuario_reset_clave(a, nombre_usuario, clave, clave2); app.state.limite.limpiar(nombre_usuario)
+        return admin_accion(request, csrf, hacer, f'Clave de «{nombre_usuario}» restablecida.')
+
+    @app.get('/admin/auditoria', response_class=HTMLResponse)
+    def admin_auditoria(request: Request):
+        superadmin(request); q = request.query_params
+        def f_ok(x):
+            try: datetime.strptime(x, '%Y-%m-%d'); return x
+            except ValueError: return ''
+        try: pag = int(q.get('pagina', '1'))
+        except ValueError: pag = 1
+        f = {'usuario': q.get('usuario', '').strip()[:60], 'accion': q.get('accion', '').strip()[:60], 'desde': f_ok(q.get('desde', '')), 'hasta': f_ok(q.get('hasta', ''))}
+        r = alm.auditoria(f['usuario'] or None, f['accion'] or None, f['desde'] or None, f['hasta'] or None, pag)
+        base = '&'.join(f'{k}={quote(v)}' for k, v in f.items() if v)
+        return render(request, 'admin_auditoria.html', f=f, base=base, **r)
 
     return app
 
