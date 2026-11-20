@@ -249,6 +249,14 @@ class Almacen:
         try: return con.execute('SELECT * FROM cierres WHERE id=?', (cid,)).fetchone()
         finally: con.close()
 
+    def movimientos_cierre(self, cid):
+        """Facturas QR BANECO con ID TRANSACCION del cierre (conciliadas automaticas, confirmadas por el cajero o con respaldo manual QR).
+        Las comunicaciones internas y las tarjetas no estan aqui. Lista de dicts en el orden en que se registraron."""
+        con = self.con()
+        try:
+            return [dict(r) for r in con.execute('SELECT id_transaccion, factura, monto FROM cierre_movimientos WHERE cierre_id=? ORDER BY rowid', (cid,))]
+        finally: con.close()
+
     # ---------------- presentacion ----------------
     def presentar(self, bid, est, usuario, nombre):
         from . import pdf
@@ -592,6 +600,15 @@ def conceptos(t):
         {'concepto': 'Tarjetas', 'segun_sistema': t['Tarjeta según sistema'], 'segun_respaldo': t['Tarjeta declarada'], 'diferencia': dt,
          'estado': 'CUADRA' if abs(dt) < 0.005 else 'NO CUADRA', 'nota': 'Pendiente de verificación por Ingresos'},
     ]
+
+
+def tsv_extracto(correlativo, fecha_cierre, movimientos, accion=''):
+    """Filas TSV SIN encabezado para pegar en la hoja del lote (Office Script validar_y_marcar):
+    Accion | Importe | Codigo de asignacion (ID TRANSACCION) | N° factura | Correlativo | Fecha cierre dd/mm/aaaa.
+    Devuelve (texto, n_filas, total). `accion` vacio = marcar; 'LIBERAR' = liberar."""
+    fc = fecha(fecha_cierre)
+    filas = [f"{accion}\t{float(m['monto']):.2f}\t{m['id_transaccion']}\t{m['factura']}\t{correlativo}\t{fc}" for m in movimientos]
+    return '\n'.join(filas), len(filas), round(sum(float(m['monto']) for m in movimientos), 2)
 
 
 def total_conceptos(lista):

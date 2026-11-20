@@ -34,3 +34,18 @@ document.querySelectorAll('.revision').forEach(function (cont) {
   var ini = tabs.filter(function (t) { return t.id === 'tab-' + cont.dataset.tabInicial; })[0] || tabs[0];
   activar(ini, false);
 });
+
+/* Copiar filas TSV al portapapeles (con alternativa: cuadro de texto seleccionado) */
+document.querySelectorAll('[data-copiar]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var texto = JSON.parse(document.getElementById(b.dataset.copiar).textContent);
+    var est = document.getElementById(b.dataset.estado), ta = document.getElementById('copia-manual');
+    function listo() { ta.hidden = true; est.textContent = 'Copiado. Péguelo en la hoja TRINIDAD del Excel.'; }
+    function manual() {
+      ta.hidden = false; ta.value = texto; ta.focus(); ta.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+      if (ok) listo(); else est.textContent = 'Seleccione el texto de abajo y cópielo (Ctrl+C).';
+    }
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(texto).then(listo, manual); else manual();
+  });
+});

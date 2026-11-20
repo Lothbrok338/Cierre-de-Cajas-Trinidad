@@ -1,0 +1,7 @@
+{
+  "name": "office-scripts-extracto",
+  "private": true,
+  "description": "Pruebas en Node del Office Script validar_y_marcar.ts (sin Excel)",
+  "scripts": { "test": "node --test tests/*.test.js" },
+  "devDependencies": { "typescript": "^5.4.0" }
+}

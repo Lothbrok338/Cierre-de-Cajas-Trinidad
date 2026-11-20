@@ -99,6 +99,20 @@
   </tbody>
 </table></div>
 {% endif %}
+{% if extracto %}
+<section class="tarjeta" aria-label="Copiar para el extracto">
+  <h2>Extracto bancario BANECO</h2>
+  <p class="ayuda"><strong>{{ extracto.n }}</strong> factura{{ '' if extracto.n == 1 else 's' }} QR con ID de transacción · Total <strong>{{ extracto.total | bs }}</strong> Bs. Copie y pegue en la hoja TRINIDAD del Excel (sin encabezado, desde la columna A).</p>
+  <div class="botones-izq">
+    <button class="btn btn-prim" type="button" data-copiar="datos-marcar" data-estado="estado-copia">Copiar para el extracto</button>
+    {% if extracto.liberar %}<button class="btn btn-sec" type="button" data-copiar="datos-liberar" data-estado="estado-copia">Copiar para liberar</button>{% endif %}
+  </div>
+  <p class="ayuda" id="estado-copia" role="status" aria-live="polite"></p>
+  <script type="application/json" id="datos-marcar">{{ extracto.marcar | tojson }}</script>
+  {% if extracto.liberar %}<script type="application/json" id="datos-liberar">{{ extracto.liberar | tojson }}</script>{% endif %}
+  <textarea id="copia-manual" class="mono" rows="4" readonly hidden aria-label="Texto para copiar manualmente" style="width:100%"></textarea>
+</section>
+{% endif %}
 {% if ci %}
 <h2>Comunicaciones internas</h2>
 <div class="tabla-wrap"><table class="tabla">

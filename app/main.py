@@ -346,7 +346,14 @@ def create_app():
             try: posterior = con.execute('SELECT id, correlativo FROM cierres WHERE reemplaza_a=?', (c['id'],)).fetchone()
             finally: con.close()
         conc = (cj or {}).get('conceptos', [])
-        return render(request, 'cierre.html', c=c, archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc,
+        extracto = None
+        if u['rol'] in ('ingresos', 'superadmin'):
+            movs = alm.movimientos_cierre(cid)
+            if movs:
+                t_m, n_m, tot_m = servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs)
+                extracto = {'n': n_m, 'total': tot_m, 'marcar': t_m,
+                            'liberar': servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs, 'LIBERAR')[0] if u['rol'] == 'superadmin' else None}
+        return render(request, 'cierre.html', c=c, archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc, extracto=extracto,
                       total=servicio.total_conceptos(conc) if cj else None, ci=(cj or {}).get('comunicaciones_internas', []),
                       es_ingresos=u['rol'] in ('ingresos', 'superadmin'), es_super=u['rol'] == 'superadmin',
                       es_dueno=u['rol'] in ('cajero', 'superadmin') and c['usuario'] == u['usuario'],
