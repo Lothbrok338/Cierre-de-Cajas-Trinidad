@@ -4,14 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block titulo %}Cierre Diario de Caja{% endblock %} · UNIVALLE</title>
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<meta name="theme-color" content="#870B42">
 <link rel="stylesheet" href="/static/style.css">
+<script>document.documentElement.className += ' js';</script>
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-in">
-    <a class="marca" href="/"><span class="marca-1">UNIVALLE</span><span class="marca-2">Cierre Diario de Caja</span></a>
+    <a class="marca" href="/" aria-label="UNIVALLE, Cierre Diario de Caja, inicio">
+      <img class="marca-logo" src="/static/logo-univalle.png" alt="UNIVALLE — La respuesta científica al futuro" width="180" height="46">
+      <span class="marca-t">Cierre Diario de Caja</span>
+    </a>
     {% if user %}
-    <nav class="nav">
+    <nav class="nav" aria-label="Principal">
       <a href="/">{{ 'Cierres' if user.rol != 'cajero' else 'Mis cierres' }}</a>
       {% if user.rol == 'cajero' %}<a href="/nuevo">Nuevo cierre</a>{% endif %}
     </nav>

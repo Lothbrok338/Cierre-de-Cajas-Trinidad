@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS cierres (
   motivo_reemplazo TEXT,
   presentado_en TEXT NOT NULL,
   ruta TEXT NOT NULL,
-  sha256_movimiento TEXT, sha256_banco TEXT
+  sha256_movimiento TEXT, sha256_banco TEXT,
+  ci_total REAL,
+  revisado_por TEXT, revisado_en TEXT, observacion_revision TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_cierres_fu ON cierres(fecha_cierre, usuario);
 CREATE TABLE IF NOT EXISTS auditoria (
@@ -28,6 +30,11 @@ CREATE TABLE IF NOT EXISTS cierre_movimientos (
   id_transaccion TEXT NOT NULL, factura TEXT, monto REAL
 );
 CREATE INDEX IF NOT EXISTS ix_cm_id ON cierre_movimientos(id_transaccion);
+CREATE TABLE IF NOT EXISTS cierre_ci (
+  cierre_id INTEGER NOT NULL REFERENCES cierres(id),
+  factura TEXT, banco TEXT NOT NULL, codigo TEXT NOT NULL, monto REAL
+);
+CREATE INDEX IF NOT EXISTS ix_ci_bc ON cierre_ci(banco, codigo);
 """
 
 
@@ -41,10 +48,34 @@ def conectar(ruta):
     return con
 
 
+# columnas agregadas despues del esquema v1: (tabla, columna, definicion)
+MIGRACIONES = [
+    ('cierres', 'ci_total', 'REAL'),
+    ('cierres', 'revisado_por', 'TEXT'),
+    ('cierres', 'revisado_en', 'TEXT'),
+    ('cierres', 'observacion_revision', 'TEXT'),
+]
+VERSION_ESQUEMA = 2
+
+
+def migrar(con):
+    """Migracion idempotente: agrega las columnas que falten (no toca los datos existentes)."""
+    for tabla, col, definicion in MIGRACIONES:
+        cols = {r[1] for r in con.execute(f'PRAGMA table_info({tabla})')}
+        if col not in cols:
+            try: con.execute(f'ALTER TABLE {tabla} ADD COLUMN {col} {definicion}')
+            except sqlite3.OperationalError as e:
+                if 'duplicate column' not in str(e).lower(): raise    # otro proceso la agrego antes
+    con.execute(f'PRAGMA user_version = {VERSION_ESQUEMA}')
+
+
 def inicializar(ruta):
     os.makedirs(os.path.dirname(os.path.abspath(ruta)), exist_ok=True)
     con = conectar(ruta)
-    con.executescript(ESQUEMA); con.close()
+    try:
+        con.executescript(ESQUEMA)   # CREATE ... IF NOT EXISTS: en una DB v1 no cambia las tablas existentes
+        migrar(con)
+    finally: con.close()
 
 
 def auditar(ruta, usuario, accion, detalle=None):

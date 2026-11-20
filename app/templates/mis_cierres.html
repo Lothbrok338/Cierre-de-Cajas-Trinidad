@@ -5,6 +5,15 @@
   <h1>{{ 'Cierres presentados' if todos else 'Mis cierres' }}</h1>
   {% if not todos %}<a class="btn btn-prim" href="/nuevo">Nuevo cierre</a>{% endif %}
 </div>
+{% if todos %}
+<form method="get" action="/" class="filtros" aria-label="Filtrar cierres">
+  <div><label for="f-estado">Estado</label>
+    <select id="f-estado" name="estado"><option value="">Todos</option>{% for e in ESTADOS %}<option value="{{ e }}" {{ 'selected' if e == f_estado }}>{{ e }}</option>{% endfor %}</select></div>
+  <div><label for="f-desde">Fecha del cierre, desde</label><input id="f-desde" name="desde" type="date" value="{{ f_desde }}"></div>
+  <div><label for="f-hasta">hasta</label><input id="f-hasta" name="hasta" type="date" value="{{ f_hasta }}"></div>
+  <div class="filtros-bt"><button class="btn btn-prim btn-sm" type="submit">Filtrar</button>{% if filtrado %} <a class="btn btn-sec btn-sm" href="/">Quitar filtros</a>{% endif %}</div>
+</form>
+{% endif %}
 {% if cierres %}
 <div class="tabla-wrap">
 <table class="tabla">
@@ -16,15 +25,16 @@
     <td data-l="Fecha del cierre">{{ c.fecha_cierre | fecha }}</td>
     {% if todos %}<td data-l="Cajero">{{ c.nombre }}</td>{% endif %}
     <td data-l="Total (Bs)" class="num">{{ c.total_cierre | bs }}</td>
-    <td data-l="Estado"><span class="insignia {{ 'ins-gris' if c.estado_revision == 'REEMPLAZADO' else 'ins-azul' }}">{{ c.estado_revision }}</span></td>
+    <td data-l="Estado"><span class="insignia {{ c.estado_revision | clase_estado }}">{{ c.estado_revision }}</span>
+      {% if c.estado_revision == 'RECHAZADO' and not todos %}<br><small class="obs-mini">Observación de Ingresos: {{ c.observacion_revision }}</small>{% endif %}</td>
     <td data-l="Presentado el">{{ c.presentado_en | fecha_hora }}</td>
-    <td><a class="btn btn-sec btn-sm" href="/cierres/{{ c.id }}">Ver detalle</a></td>
+    <td><a class="btn btn-sec btn-sm" href="/cierres/{{ c.id }}">{{ 'Ver y corregir' if c.estado_revision == 'RECHAZADO' and not todos else ('Revisar' if c.estado_revision == 'PENDIENTE DE REVISIÓN' and todos else 'Ver detalle') }}</a></td>
   </tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<section class="tarjeta vacio"><p>Todavía no hay cierres presentados.</p>{% if not todos %}<p>Presione <strong>Nuevo cierre</strong> para empezar.</p>{% endif %}</section>
+<section class="tarjeta vacio"><p>{{ 'No hay cierres con esos filtros.' if filtrado else 'Todavía no hay cierres presentados.' }}</p>{% if not todos %}<p>Presione <strong>Nuevo cierre</strong> para empezar.</p>{% endif %}</section>
 {% endif %}
 {% endblock %}

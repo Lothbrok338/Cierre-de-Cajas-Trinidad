@@ -5,11 +5,13 @@ from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
+from reportlab.platypus import Image, SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether
 
 from .formato import bs, fecha, fecha_hora, hora
 
-AZUL = colors.HexColor('#12365f'); GRIS = colors.HexColor('#5b6573'); LINEA = colors.HexColor('#c9d1db'); FONDO = colors.HexColor('#eef2f7')
+import os
+LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'logo-univalle.png')
+AZUL = colors.HexColor('#870B42'); GRIS = colors.HexColor('#535352'); LINEA = colors.HexColor('#d9cdd3'); FONDO = colors.HexColor('#F6E7EE')
 AMBAR = colors.HexColor('#fff1cc'); VERDE = colors.HexColor('#dff3e4'); ROJO = colors.HexColor('#f9dcdc')
 
 _ss = getSampleStyleSheet()
@@ -29,8 +31,9 @@ def _p(t, st=N):
 
 def _col_estado(e):
     e = str(e)
-    if e.startswith('CUADRA') or e in ('CONCILIADA',): return VERDE
-    if 'CONFIRMADA' in e or 'PENDIENTE' in e or 'CONFIRMAR' in e: return AMBAR
+    if e.startswith('PREVALIDADO'): return FONDO
+    if e.startswith('CUADRA') or e in ('CONCILIADA', 'CONFORME'): return VERDE
+    if 'CONFIRMADA' in e or 'PENDIENTE' in e or 'CONFIRMAR' in e or 'REEMPLAZADO' in e: return AMBAR
     return ROJO
 
 
@@ -40,15 +43,27 @@ def generar(res, info, ruta):
     doc = SimpleDocTemplate(ruta, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=14 * mm, bottomMargin=14 * mm,
                             title=f"Cierre {info['correlativo']}", author='UNIVALLE')
     S = []
-    S.append(_p('UNIVALLE — Cierre Diario de Caja', H1))
-    S.append(_p(f"Correlativo {info['correlativo']}", ParagraphStyle('c2', parent=N, fontName='Helvetica-Bold', fontSize=11)))
+    if os.path.isfile(LOGO):
+        S.append(Image(LOGO, width=52 * mm, height=52 * mm * 134 / 526, hAlign='LEFT')); S.append(Spacer(1, 3))
+        cab = Table([[_p('Cierre Diario de Caja', H1)]], colWidths=[178 * mm])
+        cab.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), 1.5, AZUL), ('LEFTPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
+        S.append(cab)
+    else: S.append(_p('UNIVALLE — Cierre Diario de Caja', H1))
+    S.append(Spacer(1, 3))
+    S.append(_p(f"Correlativo {info['correlativo']}", ParagraphStyle('c2', parent=N, fontName='Helvetica-Bold', fontSize=11, textColor=AZUL)))
     S.append(Spacer(1, 4))
     enc = [[_p('Fecha del cierre', CB), _p(fecha(info['fecha_cierre']), C), _p('Caja', CB), _p(info.get('caja') or '-', C)],
            [_p('Cajero', CB), _p(f"{info['nombre']} ({info['usuario']})", C), _p('Presentado el', CB), _p(fecha_hora(info['presentado_en']), C)],
-           [_p('Versión', CB), _p(f"v{info['version']}", C), _p('Estado', CB), _p('PENDIENTE DE REVISIÓN', C)]]
+           [_p('Versión', CB), _p(f"v{info['version']}", C), _p('Estado de revisión', CB), _p(info.get('estado_revision') or 'PENDIENTE DE REVISIÓN', CB)]]
+    if info.get('motivo_reemplazo'):
+        enc.append([_p('Reemplaza a', CB), _p(info.get('reemplaza_a') or '-', C), _p('Motivo', CB), _p(info['motivo_reemplazo'], C)])
+    if info.get('revisado_por'):
+        enc.append([_p('Revisado por', CB), _p(info['revisado_por'], C), _p('Revisado el', CB), _p(fecha_hora(info['revisado_en']), C)])
+        if info.get('observacion_revision'): enc.append([_p('Observación de Ingresos', CB), _p(info['observacion_revision'], C), '', ''])
     te = Table(enc, colWidths=[30 * mm, 60 * mm, 28 * mm, 56 * mm])
     te.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (0, -1), FONDO),
                             ('BACKGROUND', (2, 0), (2, -1), FONDO), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
+    if info.get('observacion_revision'): te.setStyle(TableStyle([('SPAN', (1, len(enc) - 1), (3, len(enc) - 1)), ('BACKGROUND', (1, len(enc) - 1), (3, len(enc) - 1), colors.white)]))
     S.append(te)
 
     S.append(_p('Cuadro principal', H2))
@@ -60,7 +75,7 @@ def generar(res, info, ruta):
         st = CB if c['concepto'] == 'TOTAL' else C
         filas.append([_p(c['concepto'], st), _p(bs(c['segun_sistema']), st), _p(bs(c['segun_respaldo']), st), _p(bs(c['diferencia']), st), _p(c['estado'], st)])
         estilos.append(('BACKGROUND', (4, i), (4, i), _col_estado(c['estado'])))
-    tc = Table(filas, colWidths=[40 * mm, 34 * mm, 34 * mm, 30 * mm, 36 * mm]); tc.setStyle(TableStyle(estilos))
+    tc = Table(filas, colWidths=[40 * mm, 30 * mm, 30 * mm, 28 * mm, 46 * mm]); tc.setStyle(TableStyle(estilos))
     for r in filas[1:]:
         for cell in r[1:4]: cell.style = ParagraphStyle('rr', parent=cell.style, alignment=TA_RIGHT)
     S.append(tc)
@@ -74,6 +89,7 @@ def generar(res, info, ruta):
                 ['Conciliadas automáticamente', str(t['n_CONCILIADA'])],
                 ['Confirmadas por el cajero', str(t['n_CONFIRMADA POR CAJERO'])],
                 ['Depósitos de otros cajeros excluidos', f"{len(ajenos)}  (Bs {bs(ajenos['MONTO'].sum())})"],
+                *([['Comunicaciones internas (otras cuentas)', f"{t['n_COMUNICACIÓN INTERNA']}  (Bs {bs(t['C.I. según sistema'])})"]] if t['n_COMUNICACIÓN INTERNA'] else []),
                 ['Facturas anuladas excluidas', f"{len(anul)}  (Bs {bs(anul['Monto'].sum())})"]]
     tr = Table([[_p(a, C), _p(v, CB)] for a, v in res_rows], colWidths=[90 * mm, 60 * mm])
     tr.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (0, -1), FONDO)]))
@@ -105,8 +121,15 @@ def generar(res, info, ruta):
     if conf.empty: S.append(_p('Ninguna.', C))
     else:
         for _, r in conf.iterrows():
-            how = 'asignación elegida por el cajero' if r['nivel'] == 'ELECCIÓN CAJERO' else 'coincidencia parcial confirmada por el cajero'
+            how = {'ELECCIÓN CAJERO': 'asignación elegida por el cajero', 'RESPALDO MANUAL': 'respaldo manual (ID de transacción indicado por el cajero)'}.get(
+                r['nivel'], 'coincidencia parcial confirmada por el cajero')
             S.append(_p(f"Factura {r['Número Factura']} (Bs {bs(r['Monto'])}) ↔ ID {r['ID TRANSACCION']} · titular banco «{r['TITULAR ORIGEN']}» · cliente «{r['Razon Social']}» / estudiante «{r['Nombre Estudiante']}» · {how}.".replace('↔', '-'), C))
+    if res.get('ci'):
+        S.append(_p('Comunicaciones internas (depósitos a otras cuentas, prevalidados por Ingresos)', H2))
+        fi = [[_p(h, CB) for h in ('N° factura', 'Cliente', 'Monto (Bs)', 'Banco', 'Código de asignación')]]
+        for r in res['ci']: fi.append([_p(r['factura'], C), _p(r['razon_social'], C), _p(bs(r['monto']), ParagraphStyle('r2', parent=C, alignment=TA_RIGHT)), _p(r['banco'], C), _p(r['codigo'], C)])
+        x = Table(fi, colWidths=[22 * mm, 66 * mm, 24 * mm, 22 * mm, 40 * mm], repeatRows=1)
+        x.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO)])); S.append(x)
     S.append(_p('Facturas anuladas (excluidas)', H2))
     if anul.empty: S.append(_p('Ninguna.', C))
     else:

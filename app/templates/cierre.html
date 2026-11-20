@@ -3,15 +3,65 @@
 {% block contenido %}
 <div class="encabezado">
   <h1>Cierre {{ c.correlativo }} <small>v{{ c.version }}</small></h1>
-  <span class="insignia {{ 'ins-gris' if c.estado_revision == 'REEMPLAZADO' else 'ins-azul' }}">{{ c.estado_revision }}</span>
+  <span class="insignia {{ c.estado_revision | clase_estado }}">{{ c.estado_revision }}</span>
 </div>
+
+{% if c.estado_revision == 'RECHAZADO' %}
+<section class="rechazo" aria-label="Cierre rechazado">
+  <h2>Rechazado por Ingresos</h2>
+  <p class="obs-texto">{{ c.observacion_revision }}</p>
+  <p class="ayuda">Revisado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}.</p>
+  {% if es_dueno %}
+  <form method="post" action="/cierres/{{ c.id }}/editar"><input type="hidden" name="csrf" value="{{ csrf }}">
+    <button class="btn btn-prim" type="submit">Editar y reenviar</button></form>
+  {% endif %}
+</section>
+{% elif c.estado_revision == 'CONFORME' %}
+<div class="aviso aviso-ok">Cierre CONFORME: revisado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}. Ya no puede modificarse.{% if c.observacion_revision %} Observación: {{ c.observacion_revision }}{% endif %}</div>
+{% elif c.estado_revision == 'REEMPLAZADO' %}
+<div class="aviso aviso-info">Este cierre fue reemplazado{% if posterior %} por <a href="/cierres/{{ posterior.id }}">{{ posterior.correlativo }}</a>{% endif %}. Se conserva solo como respaldo.</div>
+{% elif es_dueno %}
+<div class="aviso aviso-info">Pendiente de revisión por Ingresos. Mientras esté pendiente no puede modificarse.</div>
+{% endif %}
+
+{% if es_ingresos and c.estado_revision == 'PENDIENTE DE REVISIÓN' %}
+<section class="tarjeta revision-ing" aria-label="Revisión por Ingresos">
+  <h2>Revisión por Ingresos</h2>
+  <p class="ayuda">Revise el cuadro y los archivos. La decisión queda registrada con su usuario y la fecha.</p>
+  <div class="botones-izq">
+    <button class="btn btn-prim" type="button" data-abrir="dlg-aprobar">Aprobar (Conforme)</button>
+    <button class="btn btn-peligro" type="button" data-abrir="dlg-rechazar">Rechazar</button>
+  </div>
+</section>
+<dialog id="dlg-aprobar">
+  <form method="post" action="/cierres/{{ c.id }}/revisar">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="decision" value="aprobar">
+    <h2>Aprobar el cierre {{ c.correlativo }}</h2>
+    <p>El cierre quedará <strong>CONFORME</strong> y ya no podrá modificarse.</p>
+    <label for="obs-ap">Observación (opcional)</label><textarea id="obs-ap" name="observacion" rows="2"></textarea>
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-prim" data-espera="Guardando…">Aprobar</button></div>
+  </form>
+</dialog>
+<dialog id="dlg-rechazar">
+  <form method="post" action="/cierres/{{ c.id }}/revisar">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="decision" value="rechazar">
+    <h2>Rechazar el cierre {{ c.correlativo }}</h2>
+    <p>El cajero verá su observación y podrá corregir y reenviar el cierre.</p>
+    <label for="obs-re">Observación (obligatoria, mínimo {{ MIN_OBS }} caracteres)</label>
+    <textarea id="obs-re" name="observacion" rows="4" required minlength="{{ MIN_OBS }}"></textarea>
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-peligro" data-espera="Guardando…">Rechazar</button></div>
+  </form>
+</dialog>
+{% endif %}
+
 <section class="tarjeta">
   <dl class="datos">
     <div><dt>Fecha del cierre</dt><dd>{{ c.fecha_cierre | fecha }}</dd></div>
     <div><dt>Caja</dt><dd>{{ c.caja or '-' }}</dd></div>
     <div><dt>Cajero</dt><dd>{{ c.nombre }} ({{ c.usuario }})</dd></div>
     <div><dt>Presentado el</dt><dd>{{ c.presentado_en | fecha_hora }}</dd></div>
-    {% if anterior %}<div><dt>Reemplaza a</dt><dd>{{ anterior.correlativo }}</dd></div>
+    {% if c.revisado_por %}<div><dt>Revisado por</dt><dd>{{ c.revisado_por }} · {{ c.revisado_en | fecha_hora }}</dd></div>{% endif %}
+    {% if anterior %}<div><dt>Reemplaza a</dt><dd><a href="/cierres/{{ anterior.id }}">{{ anterior.correlativo }}</a></dd></div>
     <div><dt>Motivo del reemplazo</dt><dd>{{ c.motivo_reemplazo }}</dd></div>{% endif %}
   </dl>
 </section>
@@ -25,15 +75,22 @@
     <td data-l="Medio de pago">{{ r.concepto }}{% if r.nota %}<br><small>{{ r.nota }}</small>{% endif %}</td>
     <td data-l="Según sistema" class="num">{{ r.segun_sistema | bs }}</td><td data-l="Según respaldo" class="num">{{ r.segun_respaldo | bs }}</td>
     <td data-l="Diferencia" class="num">{{ r.diferencia | bs }}</td>
-    <td data-l="Estado"><span class="insignia {{ 'ins-verde' if r.estado == 'CUADRA' else 'ins-rojo' }}">{{ r.estado }}</span></td>
+    <td data-l="Estado"><span class="insignia {{ 'ins-verde' if r.estado == 'CUADRA' else ('ins-guinda' if r.estado == 'PREVALIDADO POR INGRESOS' else 'ins-rojo') }}">{{ r.estado }}</span></td>
   </tr>
   {% endfor %}
   </tbody>
 </table></div>
 {% endif %}
+{% if ci %}
+<h2>Comunicaciones internas</h2>
+<div class="tabla-wrap"><table class="tabla">
+  <thead><tr><th>N° factura</th><th>Cliente</th><th class="num">Monto (Bs)</th><th>Banco</th><th>Código de asignación</th></tr></thead>
+  <tbody>{% for r in ci %}<tr><td data-l="N° factura">{{ r.factura }}</td><td data-l="Cliente">{{ r.razon_social }}</td><td data-l="Monto (Bs)" class="num">{{ r.monto | bs }}</td><td data-l="Banco">{{ r.banco }}</td><td data-l="Código" class="mono">{{ r.codigo }}</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endif %}
 <h2>Archivos</h2>
 <ul class="archivos">
-  {% for a in archivos %}<li><a href="/cierres/{{ c.id }}/archivo/{{ a }}">{{ a }}</a></li>{% endfor %}
+  {% for a in archivos %}<li><a href="/cierres/{{ c.id }}/archivo/{{ a }}">{{ a }}</a>{% if a == 'cierre.pdf' %} <small>(tal como se presentó)</small>{% elif a == 'cierre_revision.pdf' %} <small>(con el estado de revisión)</small>{% endif %}</li>{% endfor %}
 </ul>
 <h2>Huellas de los archivos originales (SHA-256)</h2>
 <p class="mono">Movimiento: {{ c.sha256_movimiento }}<br>Banco QR BANECO: {{ c.sha256_banco }}</p>

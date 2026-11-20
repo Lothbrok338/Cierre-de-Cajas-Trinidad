@@ -165,7 +165,7 @@ def test_deshacer_y_asignar(app, sint, tmp_path):
     post(c, f'/borrador/{bid}/asignar', f'/borrador/{bid}', factura='30002', id_transaccion='700000009')
     post(c, f'/borrador/{bid}/confirmar', f'/borrador/{bid}', factura='30003')
     html = pag(c, bid).text
-    assert estado_txt(html) == 'CUADRA' and 'Deshacer' in html and 'CONFIRMADA POR USTED' in html
+    assert estado_txt(html) == 'CUADRA' and 'Deshacer' in html and 'Confirmada por cajero' in html
     post(c, f'/borrador/{bid}/deshacer', f'/borrador/{bid}', factura='30002')
     assert estado_txt(pag(c, bid).text) == 'NO CUADRA'
     est = json.load(open(os.path.join(app.state.almacen.dir, 'borradores', bid, 'estado.json')))
@@ -174,22 +174,13 @@ def test_deshacer_y_asignar(app, sint, tmp_path):
     assert 'asignar_movimiento' in acc and 'deshacer_confirmacion' in acc
 
 
-def test_reemplazo_exige_motivo(app, sint):
+def test_nuevo_cierre_bloqueado_si_hay_vigente(app, sint):
+    """v2: ya no hay reemplazo libre; un cierre vigente PENDIENTE (o CONFORME) bloquea otro para la misma fecha."""
     c, bid = flujo_hasta_cuadra(app, sint); presentar(c, bid)
-    r = subir(c, sint['a1'], sint['a2']); bid2 = bid_de(r)
-    post(c, f'/borrador/{bid2}/confirmar', f'/borrador/{bid2}', factura='30003')
-    html = pag(c, bid2).text
-    assert 'Motivo del reemplazo' in html and 'reemplazará' in html
-    r = presentar(c, bid2, motivo='   ')
+    r = subir(c, sint['a1'], sint['a2'])
+    assert r.status_code == 400 and 'Ya existe el cierre' in r.text and 'PENDIENTE DE REVISIÓN' in r.text
     assert db(app).execute('select count(*) from cierres').fetchone()[0] == 1
-    assert 'motivo del reemplazo' in pag(c, bid2).text.lower()
-    r = presentar(c, bid2, motivo='Se corrigió un monto'); assert r.headers['location'].startswith('/cierres/')
-    rows = db(app).execute('select correlativo, version, estado_revision, reemplaza_a, motivo_reemplazo, ruta from cierres order by id').fetchall()
-    assert [(x[1], x[2]) for x in rows] == [(1, 'REEMPLAZADO'), (2, 'PENDIENTE DE REVISIÓN')]
-    assert rows[1][3] == 1 and rows[1][4] == 'Se corrigió un monto' and rows[1][0].endswith('00002')
-    base = app.state.almacen.dir
-    assert os.path.isfile(os.path.join(base, rows[0][5], 'cierre.pdf')) and os.path.isfile(os.path.join(base, rows[1][5], 'cierre.pdf'))   # el anterior no se borra
-    assert os.path.basename(rows[1][5]) == 'v2'
+    assert len(os.listdir(os.path.join(app.state.almacen.dir, 'borradores'))) == 1   # no se crea otro borrador
 
 
 def test_antiduplicado_entre_usuarios(app, sint):

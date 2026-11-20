@@ -138,14 +138,27 @@ def clasif_nombre(titular, razon, estudiante, cfg=CONFIG):
     return s, 'nulo'
 
 # ---------------- motor ----------------
-def conciliar(ruta_a1, ruta_a2, tarjeta_declarada, confirmaciones=None, elecciones=None, conformidad=None, motivo=None, cfg=CONFIG):
-    return conciliar_df(parse_a1(ruta_a1), parse_a2(ruta_a2), tarjeta_declarada, confirmaciones, elecciones, conformidad, motivo, cfg)
+def conciliar(ruta_a1, ruta_a2, tarjeta_declarada, confirmaciones=None, elecciones=None, conformidad=None, motivo=None, cfg=CONFIG,
+              reclasificaciones=None, respaldos_manuales=None):
+    return conciliar_df(parse_a1(ruta_a1), parse_a2(ruta_a2), tarjeta_declarada, confirmaciones, elecciones, conformidad, motivo, cfg,
+                        reclasificaciones, respaldos_manuales)
 
-def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None, conformidad=None, motivo=None, cfg=CONFIG):
+def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None, conformidad=None, motivo=None, cfg=CONFIG,
+                 reclasificaciones=None, respaldos_manuales=None):
     """confirmaciones: lista de Número Factura (POR CONFIRMAR). elecciones: {Número Factura: ID TRANSACCION}.
+    reclasificaciones: {Número Factura: {'banco': ..., 'codigo': ...}} -> la factura QR se reclasifica como Comunicación interna
+    (C.I.) y sale del cruce QR. respaldos_manuales: lista de facturas cuya elección es un respaldo manual (nivel RESPALDO MANUAL).
     conformidad: None | 'CONFORME' | 'NO CONFORME' (+ motivo). Lanza ValueError si no es valida."""
     alertas = []
     fa, al = preparar_a1(a1, cfg); alertas += al
+    # C.I.: facturas QR validas reclasificadas por el cajero salen del cruce QR (antes de conciliar)
+    ci_decl = {}
+    for nf, d in (reclasificaciones or {}).items():
+        nf = str(nf); m = fa.index[(fa['Número Factura'] == nf) & (fa['estado_prep'] == 'VALIDA') & (fa['tipo'] == 'QR')]
+        if len(m) == 0:
+            alertas.append(('ALERTA', nf, f"Reclasificación no aplicada: factura {nf} no es una factura QR válida")); continue
+        fa.at[m[0], 'tipo'] = 'C.I.'; ci_decl[nf] = {'banco': str(d.get('banco', '')), 'codigo': str(d.get('codigo', '')).strip()}
+    manuales = {str(x) for x in (respaldos_manuales or [])}
     bk = preparar_a2(a2)
     qr = fa[(fa['estado_prep'] == 'VALIDA') & (fa['tipo'] == 'QR')]
     tj = fa[(fa['estado_prep'] == 'VALIDA') & (fa['tipo'] == 'TARJETA')]
@@ -208,6 +221,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     fa['estado_conciliacion'] = fa['estado_prep']; fa['nivel'] = ''; fa['ID TRANSACCION'] = ''; fa['TITULAR ORIGEN'] = ''
     fa['hora_banco'] = pd.NaT; fa['score_nombre'] = None; fa['dif_min'] = None; fa['candidatos'] = ''
     for fi in tj.index: fa.at[fi, 'estado_conciliacion'] = 'TARJETA'
+    for fi in fa.index[fa['tipo'] == 'C.I.']: fa.at[fi, 'estado_conciliacion'] = 'COMUNICACIÓN INTERNA'
     def poner(fi, bi, estado, nivel, score=None, dif=None):
         m = bk.loc[bi]
         fa.at[fi, 'estado_conciliacion'] = estado; fa.at[fi, 'nivel'] = nivel; fa.at[fi, 'ID TRANSACCION'] = m['ID TRANSACCION']
@@ -244,7 +258,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
         if abs(bk.at[bi, 'MONTO'] - fa.at[fi, 'Monto']) > 1e-9: rechazo(f"monto distinto (banco {bk.at[bi, 'MONTO']:.2f} vs factura {fa.at[fi, 'Monto']:.2f})"); continue
         if bk.at[bi, 'FECHA / HORA'].date() not in fechas: rechazo('fecha distinta a la del cierre'); continue
         if bk.at[bi, 'estado_banco'].startswith('ASIGNADO'): rechazo(f"movimiento ya usado por la factura {bk.at[bi, 'factura_asignada']}"); continue
-        poner(fi, bi, 'CONFIRMADA POR CAJERO', 'ELECCIÓN CAJERO')
+        poner(fi, bi, 'CONFIRMADA POR CAJERO', 'RESPALDO MANUAL' if nf in manuales else 'ELECCIÓN CAJERO')
     # facturas AMBIGUO restantes: candidatos que sigan libres
     for fi, bis in f_amb.items():
         if fa.at[fi, 'estado_conciliacion'] != 'AMBIGUO': continue
@@ -290,12 +304,20 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
         if conformidad == 'NO CONFORME' and not (motivo or '').strip():
             raise ValueError("NO CONFORME exige un motivo no vacío")
     tsis = float(tj['Monto'].sum())
+    ci_rows = []
+    for fi in fa.index[fa['tipo'] == 'C.I.']:
+        nf = str(fa.at[fi, 'Número Factura']); d = ci_decl[nf]
+        ci_rows.append({'factura': nf, 'razon_social': fa.at[fi, 'Razon Social'], 'estudiante': fa.at[fi, 'Nombre Estudiante'],
+                        'monto': float(fa.at[fi, 'Monto']), 'banco': d['banco'], 'codigo': d['codigo']})
+    ci_sis = float(sum(r['monto'] for r in ci_rows)); ci_resp = float(sum(r['monto'] for r in ci_rows if r['codigo']))
     tot = {'fecha_cierre': fechas[0] if fechas else None, 'n_facturas_qr': len(qr), 'QR registrado': reg,
            'QR conciliado automático (CONCILIADA)': auto, 'QR confirmado por cajero': conf,
            'QR pendiente de confirmar (POR CONFIRMAR + AMBIGUO)': pend, 'QR sin respaldo': sinr,
            'Diferencia QR': dif_qr, 'Estado QR': estado_qr, 'Tarjeta según sistema': tsis,
            'Tarjeta declarada': float(tarjeta_declarada), 'Diferencia tarjeta (declarada - sistema)': float(tarjeta_declarada) - tsis,
-           'Total cierre': reg + float(tarjeta_declarada),
+           'C.I. según sistema': ci_sis, 'C.I. con código de asignación': ci_resp, 'n_COMUNICACIÓN INTERNA': len(ci_rows),
+           'Detalle C.I.': '; '.join(f"{r['banco']} {r['codigo']}" for r in ci_rows),
+           'Total cierre': reg + ci_sis + float(tarjeta_declarada),
            'n_CONCILIADA': n('CONCILIADA'), 'n_CONFIRMADA POR CAJERO': n('CONFIRMADA POR CAJERO'), 'n_POR CONFIRMAR': n('POR CONFIRMAR'),
            'n_SIN RESPALDO': n('SIN RESPALDO'), 'n_AMBIGUO': n('AMBIGUO'),
            'n_movimientos_ajenos': int((bk['estado_banco'] == 'AJENO / NO CORRESPONDE AL CAJERO').sum()),
@@ -309,7 +331,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     facturas = fa[cols_f].rename(columns={'tipo': 'Tipo (motor)', 'Fecha': 'hora_factura'})
     banco = bk.drop(columns=['dup'])
     alert_df = pd.DataFrame(alertas, columns=['nivel', 'referencia', 'detalle'])
-    return {'facturas': facturas, 'banco': banco, 'resumen': resumen, 'alertas': alert_df,
+    return {'facturas': facturas, 'banco': banco, 'resumen': resumen, 'alertas': alert_df, 'ci': ci_rows,
             'tarjetas': facturas[facturas['estado_conciliacion'] == 'TARJETA'].copy(), 'totales': tot}
 
 def exportar(res, ruta):
@@ -318,6 +340,7 @@ def exportar(res, ruta):
         res['resumen'].to_excel(w, sheet_name='Resumen', index=False)
         f[f['Tipo (motor)'] == 'QR'].to_excel(w, sheet_name='Facturas_QR', index=False)
         b[~b['estado_banco'].str.startswith('ASIGNADO')].to_excel(w, sheet_name='Movimientos_ajenos', index=False)
+        if res.get('ci'): pd.DataFrame(res['ci']).to_excel(w, sheet_name='Comunicaciones_internas', index=False)
         res['tarjetas'].to_excel(w, sheet_name='Tarjetas', index=False)
         res['alertas'].to_excel(w, sheet_name='Alertas', index=False)
     return ruta

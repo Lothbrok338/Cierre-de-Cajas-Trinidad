@@ -17,3 +17,10 @@ Pruebas: `python -m pytest tests` (los tests con datos reales requieren `DATOS_P
 - `PORT` (lo define Railway)
 
 Los reportes reales nunca van al repositorio (ver `.gitignore`).
+
+## v2: roles, revisión y respaldo manual
+- Roles: `cajero` (crea cierres, corrige los RECHAZADOS) e `ingresos` (ve todos, filtra por estado/fecha, aprueba o rechaza con observación de al menos 10 caracteres).
+- Estados: PENDIENTE DE REVISIÓN → CONFORME | RECHAZADO; un RECHAZADO se corrige con «Editar y reenviar» (crea la versión siguiente y deja la anterior como REEMPLAZADO). Un CONFORME no se modifica.
+- Respaldo manual de facturas observadas (`app/catalogo.py`): QR BANECO (ID de transacción del reporte) o depósito a otro banco (se reclasifica como Comunicación interna; el par banco/código no puede repetirse en cierres vigentes). `formato_asignacion` por banco está en `None` hasta definir los formatos oficiales.
+- Base de datos: `app/db.py` migra el esquema v1 al arrancar de forma idempotente (columnas de revisión y tabla `cierre_ci`), sin perder datos.
+- Iconos: `python scripts/generar_iconos.py` regenera favicon y apple-touch-icon desde `scripts/escudo_fuente.png` (reemplace ese archivo por la versión a color).
