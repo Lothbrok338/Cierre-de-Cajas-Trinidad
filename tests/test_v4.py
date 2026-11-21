@@ -40,7 +40,7 @@ def test_cajero_ve_alerta_y_no_se_bloquea(app, sint_extra):
     assert 'FORMATO A REVISAR' in msg and 'BNB: letras y números, debe incluir una P' in msg
     html = pag(c, bid).text
     assert 'Alertas de revisión (1)' in html and 'class="alerta-fmt"' in html                  # banner + junto a la factura
-    assert 'FORMATO A REVISAR: factura 30003, BNB, código ABC-123' in html                    # en la sección Alertas existente
+    assert 'Factura 30003: el código ABC-123 de BNB no cumple el formato esperado' in html                    # en la sección Alertas existente
     assert db(app).execute("select count(*) from auditoria where accion='alerta_formato'").fetchone()[0] == 1
     respaldo(c, bid, '30006', 'BMSC', 't-77'); assert 'Alertas de revisión (2)' in pag(c, bid).text
     post(c, f'/borrador/{bid}/deshacer', f'/borrador/{bid}', factura='30006'); respaldo(c, bid, '30006', 'BMSC', 'a7t')   # corregido: ya sin alerta

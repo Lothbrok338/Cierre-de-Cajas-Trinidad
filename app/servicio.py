@@ -162,7 +162,7 @@ class Almacen:
         nuevo = json.loads(json.dumps(est))
         for k, v in (('reclasificaciones', {}), ('respaldos_manuales', [])): nuevo.setdefault(k, v)
         if catalogo.es_qr(banco):
-            if not codigo: raise ErrorUsuario('Escriba el ID de transacción del reporte QR.')
+            if not codigo: raise ErrorUsuario('Escriba el número de transacción del reporte QR del banco.')
             if estado == 'POR CONFIRMAR':
                 raise ErrorUsuario(f'La factura {nf} ya tiene un movimiento del banco sugerido: use «Sí, corresponde», o reclasifíquela con otro banco.')
             nuevo['elecciones'][nf] = codigo
@@ -170,10 +170,10 @@ class Almacen:
             r2 = self.conciliar(bid, nuevo); f2 = r2['facturas'].set_index('Número Factura')
             if f2.loc[nf, 'estado_conciliacion'] != 'CONFIRMADA POR CAJERO':
                 al = [a['detalle'] for a in r2['alertas'].to_dict('records') if a['referencia'] == nf and 'Elección no aplicada' in a['detalle']]
-                motivo = al[0].split('): ', 1)[-1] if al else 'ID de transacción no válido'
-                raise ErrorUsuario(f'El ID de transacción {codigo} no es válido para la factura {nf}: {motivo}.')
+                motivo = al[0].split('): ', 1)[-1].rstrip('.') if al else 'número de transacción no válido'
+                raise ErrorUsuario(f'El número de transacción {codigo} no es válido para la factura {nf}: {motivo}.')
             c = [x for x in self.conflictos_para(r2, usuario) if x['factura'] == nf]
-            if c: raise ErrorUsuario(f"El ID de transacción {codigo} ya está en el cierre {c[0]['correlativo']} (cajero {c[0]['usuario']}).")
+            if c: raise ErrorUsuario(f"El número de transacción {codigo} ya está en el cierre {c[0]['correlativo']} (cajero {c[0]['usuario']}).")
             return nuevo, {'banco': banco, 'codigo': codigo, 'resultado': 'CONFIRMADA POR CAJERO (RESPALDO MANUAL)'}
         ok, msg, cn = catalogo.validar_codigo(banco, codigo)
         if not ok: raise ErrorUsuario(msg)
@@ -306,7 +306,7 @@ class Almacen:
             confl = [c for c in self.conflictos_ids(res) if not (prev and c['correlativo'] == prev['correlativo'])]
             if confl:
                 c = confl[0]
-                raise ErrorUsuario(f"La factura {c['factura']} usa el ID de transacción {c['id_transaccion']}, que ya está en el cierre "
+                raise ErrorUsuario(f"La factura {c['factura']} usa el número de transacción {c['id_transaccion']}, que ya está en el cierre "
                                    f"{c['correlativo']} (cajero {c['usuario']}). No se puede presentar.")
             confl_ci = self.conflictos_ci_para(res, usuario)
             if confl_ci:
@@ -575,6 +575,8 @@ class Almacen:
         info = {k: cj.get(k) for k in ('correlativo', 'fecha_cierre', 'caja', 'usuario', 'nombre', 'presentado_en', 'version',
                                        'sha256_movimiento', 'sha256_banco', 'motivo_reemplazo')}
         info['alertas_formato'] = cj.get('alertas_formato') or []
+        u_rev = self.usuario_get(c['revisado_por']) if c['revisado_por'] else None   # nombre completo solo para mostrar; revisado_por sigue siendo el login
+        info['revisado_por_nombre'] = u_rev['nombre'] if u_rev is not None and u_rev['nombre'] else c['revisado_por']
         info.update(estado_revision=c['estado_revision'], revisado_por=c['revisado_por'], revisado_en=c['revisado_en'],
                     observacion_revision=c['observacion_revision'], reemplaza_a=cj.get('reemplaza_a'))
         destino = os.path.join(d, 'cierre_revision.pdf')

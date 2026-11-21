@@ -16,7 +16,7 @@
   <h2>Comprobante</h2>
   <p class="estado-linea"><span class="insignia {{ c.estado_revision | clase_estado }}">{{ c.estado_revision }}</span>
     {% if c.estado_revision == 'PENDIENTE DE REVISIÓN' %}Esperando revisión de Ingresos — presentado {{ pendiente_hace }}.
-    {% elif c.estado_revision == 'CONFORME' %}Aprobado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}.
+    {% elif c.estado_revision == 'CONFORME' %}Aprobado por {{ c.revisado_por | nombre_completo }} el {{ c.revisado_en | fecha_hora }}.
     {% elif c.estado_revision == 'RECHAZADO' %}Rechazado por Ingresos: {{ c.observacion_revision }}
     {% elif c.estado_revision == 'REEMPLAZADO' %}Reemplazado por la versión v{{ c.version + 1 }}{% if posterior %}: <a href="/cierres/{{ posterior.id }}">{{ posterior.correlativo }}</a>{% endif %}.{% endif %}</p>
   <div class="botones-izq">
@@ -30,10 +30,10 @@
 <section class="rechazo" aria-label="Cierre rechazado">
   <h2>Rechazado por Ingresos</h2>
   <p class="obs-texto">{{ c.observacion_revision }}</p>
-  <p class="ayuda">Revisado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}.</p>
+  <p class="ayuda">Revisado por {{ c.revisado_por | nombre_completo }} el {{ c.revisado_en | fecha_hora }}.</p>
 </section>
 {% elif c.estado_revision == 'CONFORME' %}
-<div class="aviso aviso-ok">Cierre CONFORME: revisado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}. Ya no puede modificarse.{% if c.observacion_revision %} Observación: {{ c.observacion_revision }}{% endif %}</div>
+<div class="aviso aviso-ok">Cierre CONFORME: revisado por {{ c.revisado_por | nombre_completo }} el {{ c.revisado_en | fecha_hora }}. Ya no puede modificarse.{% if c.observacion_revision %} Observación: {{ c.observacion_revision }}{% endif %}</div>
 {% elif c.estado_revision == 'REEMPLAZADO' %}
 <div class="aviso aviso-info">Este cierre fue reemplazado{% if posterior %} por <a href="/cierres/{{ posterior.id }}">{{ posterior.correlativo }}</a>{% endif %}. Se conserva solo como respaldo.</div>
 {% elif es_dueno %}
@@ -48,7 +48,7 @@
     <thead><tr><th>N° factura</th><th>Banco</th><th>Código</th><th>Regla esperada</th><th>Estado</th></tr></thead>
     <tbody>{% for a in alertas_c %}<tr>
       <td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Regla esperada">{{ a.detalle }}</td>
-      <td data-l="Estado">{% if a.revisada_en %}<span class="insignia ins-verde">Revisada</span><br><small>{{ a.revisada_por }} · {{ a.revisada_en | fecha_hora }}</small>
+      <td data-l="Estado">{% if a.revisada_en %}<span class="insignia ins-verde">Revisada</span><br><small>{{ a.revisada_por | nombre_completo }} · {{ a.revisada_en | fecha_hora }}</small>
         {% elif es_ingresos %}<form method="post" action="/cierres/{{ c.id }}/alertas/{{ a.id }}/revisar" class="en-linea"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sec btn-sm" type="submit">Marcar como revisada</button></form>
         {% else %}<span class="insignia ins-alerta">⚠ Por revisar</span>{% endif %}</td>
     </tr>{% endfor %}</tbody>
@@ -111,7 +111,7 @@
     <div><dt>Caja</dt><dd>{{ c.caja or '-' }}</dd></div>
     <div><dt>Cajero</dt><dd>{{ c.nombre }} ({{ c.usuario }})</dd></div>
     <div><dt>Presentado el</dt><dd>{{ c.presentado_en | fecha_hora }}</dd></div>
-    {% if c.revisado_por %}<div><dt>Revisado por</dt><dd>{{ c.revisado_por }} · {{ c.revisado_en | fecha_hora }}</dd></div>{% endif %}
+    {% if c.revisado_por %}<div><dt>Revisado por</dt><dd>{{ c.revisado_por | nombre_completo }} · {{ c.revisado_en | fecha_hora }}</dd></div>{% endif %}
     {% if anterior %}<div><dt>Reemplaza a</dt><dd><a href="/cierres/{{ anterior.id }}">{{ anterior.correlativo }}</a></dd></div>
     <div><dt>Motivo del reemplazo</dt><dd>{{ c.motivo_reemplazo }}</dd></div>{% endif %}
   </dl>
@@ -159,7 +159,7 @@
 <div class="tabla-wrap"><table class="tabla">
   <thead><tr><th>Momento</th><th>Usuario</th><th>Acción</th><th>Estado</th><th>Observación / motivo</th></tr></thead>
   <tbody>{% for h in historial %}<tr>
-    <td data-l="Momento">{{ h.momento | fecha_hora }}</td><td data-l="Usuario">{{ h.usuario }}</td>
+    <td data-l="Momento">{{ h.momento | fecha_hora }}</td><td data-l="Usuario">{{ h.usuario | nombre_completo }}</td>
     <td data-l="Acción">{{ {'aprobar': 'Aprobó', 'rechazar': 'Rechazó', 'revertir': 'Revirtió la revisión'}.get(h.accion, h.accion) }}</td>
     <td data-l="Estado">{{ h.estado_anterior }} → <strong>{{ h.estado_nuevo }}</strong></td>
     <td data-l="Observación">{{ h.observacion or '-' }}</td></tr>{% endfor %}</tbody>
@@ -167,7 +167,7 @@
 {% else %}<p class="ayuda">Todavía no hay revisiones registradas para este cierre.</p>{% endif %}
 {% endif %}
 {% set lista_archivos %}<ul class="archivos">
-  {% for a in archivos %}<li><a href="/cierres/{{ c.id }}/archivo/{{ a }}">{{ a }}</a>{% if a == 'cierre.pdf' %} <small>(tal como se presentó)</small>{% elif a == 'cierre_revision.pdf' %} <small>(con el estado de revisión)</small>{% endif %}</li>{% endfor %}
+  {% for a in archivos %}<li><a href="/cierres/{{ c.id }}/archivo/{{ a }}">{{ a | nombre_archivo }}</a>{% if a == 'cierre.pdf' %} <small>(tal como se presentó)</small>{% elif a == 'cierre_revision.pdf' %} <small>(con el estado de revisión)</small>{% endif %}</li>{% endfor %}
 </ul>{% endset %}
 {% if es_ingresos %}<h2>Archivos</h2>{{ lista_archivos }}
 {% else %}<details class="respaldo-tec"><summary>Archivos de respaldo (avanzado)</summary>{{ lista_archivos }}</details>{% endif %}

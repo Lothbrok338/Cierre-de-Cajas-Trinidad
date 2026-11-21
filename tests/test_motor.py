@@ -138,7 +138,7 @@ def test_eleccion_invalida():
     # ID ya usado por otra factura (mismo monto 25: 419889217 pertenece a 20049)
     ruta6 = a2_sintetico('A2_T6_empate', [('900000006', RS['20041'], '16/10/2026 16:14:56', 25)])
     r = mc.conciliar(A1, ruta6, 1191, elecciones={'20041': '419889217'})
-    assert est(r, '20041')['estado_conciliacion'] == 'AMBIGUO' and r['alertas']['detalle'].str.contains('ya usado').any()
+    assert est(r, '20041')['estado_conciliacion'] == 'AMBIGUO' and r['alertas']['detalle'].str.contains('ya fue usado').any()
     # ID inexistente
     r = mc.conciliar(A1, ruta, 1191, elecciones={'20047': '123'})
     assert r['alertas']['detalle'].str.contains('inexistente').any() and est(r, '20047')['estado_conciliacion'] == 'SIN RESPALDO'

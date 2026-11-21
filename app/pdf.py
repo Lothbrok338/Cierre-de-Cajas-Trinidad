@@ -64,9 +64,12 @@ def generar(res, info, ruta):
         S.append(Image(LOGO, width=52 * mm, height=52 * mm * 134 / 526, hAlign='LEFT')); S.append(Spacer(1, 3))
     else: S.append(_p('UNIVALLE', H1))
     estado = info.get('estado_revision') or 'PENDIENTE DE REVISIÓN'
-    cab = Table([[_p('Comprobante de cierre de caja', H1), _p(estado, ParagraphStyle('ins', parent=CB, fontSize=8.5, leading=10.5, alignment=1))]], colWidths=[118 * mm, 60 * mm])
-    cab.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), 1.5, AZUL), ('LEFTPADDING', (0, 0), (0, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-                             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('BACKGROUND', (1, 0), (1, 0), _col_estado(estado)), ('BOX', (1, 0), (1, 0), 0.5, LINEA)]))
+    # Recuadro de estado: caja propia de altura fija, apoyada sobre la linea inferior del titulo (no dentro de su celda, que la estiraba)
+    caja_estado = Table([[_p(estado, ParagraphStyle('ins', parent=CB, fontSize=8.5, leading=10.5, alignment=1))]], colWidths=[52 * mm], rowHeights=[8 * mm])
+    caja_estado.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), _col_estado(estado)), ('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('VALIGN', (0, 0), (-1, -1), 'MIDDLE')]))
+    cab = Table([[_p('Comprobante de cierre de caja', H1), caja_estado]], colWidths=[122 * mm, 52 * mm])
+    cab.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), 1.5, AZUL), ('LEFTPADDING', (0, 0), (0, -1), 0), ('RIGHTPADDING', (1, 0), (1, -1), 0),
+                             ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 4), ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'), ('ALIGN', (1, 0), (1, 0), 'RIGHT')]))
     S.append(cab)
     S.append(Spacer(1, 3))
     S.append(_p(f"Correlativo {info['correlativo']}", ParagraphStyle('c2', parent=N, fontName='Helvetica-Bold', fontSize=11, textColor=AZUL)))
@@ -77,7 +80,7 @@ def generar(res, info, ruta):
     if info.get('motivo_reemplazo'):
         enc.append([_p('Reemplaza a', CB), _p(info.get('reemplaza_a') or '-', C), _p('Motivo', CB), _p(info['motivo_reemplazo'], C)])
     if info.get('revisado_por'):
-        enc.append([_p('Revisado por', CB), _p(info['revisado_por'], C), _p('Revisado el', CB), _p(fecha_hora(info['revisado_en']), C)])
+        enc.append([_p('Revisado por', CB), _p(info.get('revisado_por_nombre') or info['revisado_por'], C), _p('Revisado el', CB), _p(fecha_hora(info['revisado_en']), C)])
         if info.get('observacion_revision'): enc.append([_p('Observación de Ingresos', CB), _p(info['observacion_revision'], C), '', ''])
     te = Table(enc, colWidths=[30 * mm, 60 * mm, 28 * mm, 56 * mm])
     te.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (0, -1), FONDO),
@@ -179,7 +182,7 @@ def generar(res, info, ruta):
         canvas.saveState(); canvas.setFillColor(GRIS)
         est_r = info.get('estado_revision') or 'PENDIENTE DE REVISIÓN'
         if est_r == 'CONFORME' and info.get('revisado_por'):
-            txt = f"Revisado y conforme por {info['revisado_por']} el {fecha_hora(info['revisado_en'])}."
+            txt = f"Revisado y conforme por {info.get('revisado_por_nombre') or info['revisado_por']} el {fecha_hora(info['revisado_en'])}."
         elif est_r == 'RECHAZADO':
             txt = f"Rechazado por Ingresos: {info.get('observacion_revision') or '-'}"
         else:

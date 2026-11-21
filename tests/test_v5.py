@@ -53,11 +53,11 @@ def test_enlace_usa_revision_pdf_cuando_existe_y_cierre_pdf_inmutable(app, sint)
     assert revisar(ing, cid, 'aprobar', 'Todo bien').status_code == 303
     html = c.get(f'/cierres/{cid}').text
     assert f'/cierres/{cid}/archivo/cierre_revision.pdf"' in html and f'/archivo/cierre.pdf"' not in html.split('Archivos de respaldo')[0]
-    assert 'Aprobado por ing' in html
+    assert 'Aprobado por Ingresos Prueba' in html
     assert c.get(f'/cierres/{cid}/comprobante').headers['location'].endswith('cierre_revision.pdf')
     assert hashlib.sha256(open(os.path.join(d, 'cierre.pdf'), 'rb').read()).hexdigest() == h0     # inmutable
     t = texto_pdf(os.path.join(d, 'cierre_revision.pdf'))
-    assert 'Revisado y conforme por ing' in t and 'CONFORME' in t and 'no constituye aprobación' not in t
+    assert 'Revisado y conforme por Ingresos Prueba' in t and 'CONFORME' in t and 'no constituye aprobación' not in t
     # revertir regenera con pie de pendiente; rechazar muestra la observacion
     sup = login(app, 'sup'); post(sup, f'/cierres/{cid}/revertir', f'/cierres/{cid}', motivo='Se aprobó por error aquí')
     assert 'no constituye aprobación hasta la revisión de Ingresos' in texto_pdf(os.path.join(d, 'cierre_revision.pdf'))

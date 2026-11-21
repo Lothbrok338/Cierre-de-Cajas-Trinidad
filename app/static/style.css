@@ -118,3 +118,4 @@ select{width:100%}
 .btn-grande{padding:.7rem 1.2rem;font-size:1.05rem}
 .respaldo-tec{margin:1rem 0}.respaldo-tec summary{cursor:pointer;color:var(--g-osc);font-weight:600}
 .hace{color:#5e3d00}.acc-fila{white-space:nowrap}
+.confirmar-todas{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin:.4rem 0 .8rem}#dlg-confirmar-todas{max-width:min(46rem,94vw)}#dlg-confirmar-todas .tabla-wrap{margin-bottom:1rem}

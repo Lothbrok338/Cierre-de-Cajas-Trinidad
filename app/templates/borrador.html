@@ -18,7 +18,7 @@
   <h1>Revisión del cierre del {{ t.fecha_cierre | fecha }}</h1>
   {% if not origen %}<a class="btn btn-sec" href="/nuevo">Volver a cargar archivos</a>{% endif %}
 </div>
-<p class="ayuda">Caja {{ est.caja or '-' }} · Archivos: {{ est.nombres_subidos.movimiento }} y {{ est.nombres_subidos.banco }}</p>
+<p class="ayuda">Caja {{ est.caja or '-' }} · Archivos: {{ est.nombres_subidos.movimiento | nombre_archivo }} y {{ est.nombres_subidos.banco | nombre_archivo }}</p>
 
 {% if origen %}
 <section class="rechazo" aria-label="Corrección de un cierre rechazado">
@@ -118,6 +118,10 @@
   <div class="panel" role="tabpanel" id="panel-observadas" aria-labelledby="tab-observadas" tabindex="0">
     <h3 class="panel-titulo">Observadas ({{ observadas | length }})</h3>
     {% if observadas %}
+    {% if por_confirmar | length >= 2 %}
+    <div class="confirmar-todas"><button class="btn btn-sec" type="button" data-abrir="dlg-confirmar-todas">Confirmar todas las coincidencias dudosas ({{ por_confirmar | length }})</button>
+      <span class="ayuda">Solo para las facturas «POR CONFIRMAR»; las demás se resuelven una por una.</span></div>
+    {% endif %}
     <div class="tabla-wrap"><table class="tabla tabla-fact">
       {{ tabla_cabecera() }}
       <tbody>
@@ -186,15 +190,17 @@
   {% for a in tarjetas %}<tr><td>{{ a['Número Factura'] }}</td><td>{{ a['Razon Social'] }}</td><td class="num">{{ a['Monto'] | bs }}</td></tr>{% endfor %}
   </tbody></table></div>{% else %}<p class="ayuda">No hay facturas con tarjeta.</p>{% endif %}
 </details>
-<details class="seccion"><summary>Alertas <span class="cuenta">{{ alertas | length }}</span></summary>
-  {% if alertas %}<ul class="alertas">{% for a in alertas %}<li><span class="insignia {{ 'ins-ambar' if a.nivel == 'ALERTA' else 'ins-gris' }}">{{ a.nivel }}</span> {{ a.detalle }}</li>{% endfor %}</ul>
-  {% else %}<p class="ayuda">Sin alertas.</p>{% endif %}
+{% if alertas %}
+<details class="seccion" open><summary>Alertas <span class="cuenta">{{ alertas | length }}</span></summary>
+  <p class="ayuda">Estos avisos no impiden presentar, pero Ingresos los verá.</p>
+  <ul class="alertas">{% for a in alertas %}<li>{{ a.detalle }}</li>{% endfor %}</ul>
 </details>
+{% endif %}
 
 <section class="tarjeta presentar">
   <h2>Presentar el cierre</h2>
   {% if ev.presentable %}
-    <p>Al presentar, el cierre queda guardado y ya no podrá modificarse.</p>
+    <p>Al presentar se genera su comprobante en PDF para imprimir o guardar. El cierre no podrá modificarse mientras esté pendiente de revisión; si Ingresos lo rechaza, podrá corregirlo y reenviarlo.</p>
     <button class="btn btn-prim" type="button" data-abrir="dlg-presentar">Presentar cierre</button>
   {% else %}
     <button class="btn btn-prim" type="button" disabled aria-disabled="true">Presentar cierre</button>
@@ -202,10 +208,26 @@
   {% endif %}
 </section>
 
+{% if por_confirmar | length >= 2 %}
+<dialog id="dlg-confirmar-todas">
+  <form method="post" action="/borrador/{{ bid }}/confirmar-todas">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Confirmar {{ por_confirmar | length }} coincidencias dudosas</h2>
+    <p>Para cada factura, compare el cliente con el titular de la cuenta del banco. Al aceptar, confirma que <strong>todas</strong> corresponden.</p>
+    <div class="tabla-wrap"><table class="tabla">
+      <thead><tr><th>N° factura</th><th>Cliente</th><th>Titular del banco</th><th class="num">Monto (Bs)</th></tr></thead>
+      <tbody>{% for f in por_confirmar %}<tr><td data-l="N° factura"><strong>{{ f.nf }}</strong><input type="hidden" name="facturas" value="{{ f.nf }}"></td><td data-l="Cliente">{{ f.cliente }}</td><td data-l="Titular del banco">{{ f.titular }}</td><td data-l="Monto (Bs)" class="num">{{ f.monto | bs }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-prim" data-espera="Confirmando…">Sí, todas corresponden</button></div>
+  </form>
+</dialog>
+{% endif %}
+
 <dialog id="dlg-presentar">
   <form method="post" action="/borrador/{{ bid }}/presentar">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <h2>Confirmar presentación</h2>
+    <p>Al presentar se genera su comprobante en PDF para imprimir o guardar. El cierre no podrá modificarse mientras esté pendiente de revisión; si Ingresos lo rechaza, podrá corregirlo y reenviarlo.</p>
     <p>Total del cierre: <strong>Bs {{ t['Total cierre'] | bs }}</strong> (QR BANECO {{ t['QR registrado'] | bs }}{% if t['n_COMUNICACIÓN INTERNA'] %} + comunicaciones internas {{ t['C.I. según sistema'] | bs }}{% endif %} + tarjetas {{ t['Tarjeta declarada'] | bs }}).</p>
     {% if alertas_fmt %}<div class="aviso aviso-ambar">⚠ Hay {{ alertas_fmt | length }} {{ 'código' if alertas_fmt | length == 1 else 'códigos' }} con formato a revisar; Ingresos será notificado.</div>{% endif %}
     {% if origen %}<div class="aviso aviso-info">Se creará la versión siguiente del cierre, que <strong>reemplaza</strong> a {{ origen.correlativo }} (rechazado por Ingresos).</div>{% endif %}

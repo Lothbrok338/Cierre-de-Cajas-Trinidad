@@ -151,7 +151,7 @@ def test_respaldo_manual_qr_valido(app, sint_manual):
 
 def test_respaldo_manual_qr_invalido(app, sint_manual):
     c, bid = borrador_nuevo(app, sint_manual)
-    casos = [('NOEXISTE1', 'inexistente'), ('700000004', 'monto distinto'), ('', 'Escriba el ID')]
+    casos = [('NOEXISTE1', 'inexistente'), ('700000004', 'monto distinto'), ('', 'Escriba el número de transacción')]
     for codigo, esperado in casos:
         r = respaldo(c, bid, '30002', 'QR BANECO', codigo); assert r.status_code == 303
         assert esperado in flash_de(c, bid), (codigo, flash_de(c, bid))
@@ -168,7 +168,7 @@ def test_respaldo_manual_qr_invalido(app, sint_manual):
 def test_respaldo_manual_qr_id_ya_usado_por_otra_factura(app, sint_extra):
     c, bid = borrador_nuevo(app, sint_extra)
     respaldo(c, bid, '30006', 'QR BANECO', '700000002')      # asignado automáticamente a 30002 (mismo monto 300)
-    assert 'movimiento ya usado por la factura 30002' in flash_de(c, bid) and leer_estado(app, bid)['elecciones'] == {}
+    assert 'ya fue usado por la factura 30002' in flash_de(c, bid) and leer_estado(app, bid)['elecciones'] == {}
 
 
 def test_respaldo_manual_qr_id_en_otro_cierre(app, sint_manual):

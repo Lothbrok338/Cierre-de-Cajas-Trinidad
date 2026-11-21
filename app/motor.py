@@ -89,13 +89,13 @@ def preparar_a1(a1, cfg=CONFIG):
         e = str(r['Estado']).strip(); tp = str(r['Tipo Pago']).strip().upper(); ref = str(r['Número Factura'])
         if e in cfg['estados_excluidos']:
             tipos.append(None); est.append(f'EXCLUIDA ({e})')
-            alertas.append(('INFO', ref, f"Factura {ref} Bs {r['Monto']:.2f} excluida por estado {e}"))
+            alertas.append(('INFO', ref, f"La factura {ref} (Bs {r['Monto']:.2f}) está {e} y no se cuenta en el cierre."))
         elif e not in cfg['estados_validos']:
             tipos.append(None); est.append('NO PROCESADA - valor no reconocido')
-            alertas.append(('ALERTA', ref, f"valor no reconocido: Estado='{r['Estado']}' (factura {ref}, no se procesa)"))
+            alertas.append(('ALERTA', ref, f"La factura {ref} tiene un estado con valor no reconocido ('{r['Estado']}') y no se procesó. Revise el reporte del sistema de facturación."))
         elif tp not in cfg['mapa_tipo_pago']:
             tipos.append(None); est.append('NO PROCESADA - valor no reconocido')
-            alertas.append(('ALERTA', ref, f"valor no reconocido: Tipo Pago='{r['Tipo Pago']}' (factura {ref}, no se procesa)"))
+            alertas.append(('ALERTA', ref, f"La factura {ref} tiene un tipo de pago con valor no reconocido ('{r['Tipo Pago']}') y no se procesó. Revise el reporte del sistema de facturación."))
         else:
             tipos.append(cfg['mapa_tipo_pago'][tp]); est.append('VALIDA')
     f['tipo'] = tipos; f['estado_prep'] = est
@@ -156,7 +156,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     for nf, d in (reclasificaciones or {}).items():
         nf = str(nf); m = fa.index[(fa['Número Factura'] == nf) & (fa['estado_prep'] == 'VALIDA') & (fa['tipo'] == 'QR')]
         if len(m) == 0:
-            alertas.append(('ALERTA', nf, f"Reclasificación no aplicada: factura {nf} no es una factura QR válida")); continue
+            alertas.append(('ALERTA', nf, f"Reclasificación no aplicada: la factura {nf} ya no es una factura QR válida. Revise el banco y el código que registró para ella.")); continue
         fa.at[m[0], 'tipo'] = 'C.I.'; ci_decl[nf] = {'banco': str(d.get('banco', '')), 'codigo': str(d.get('codigo', '')).strip()}
     manuales = {str(x) for x in (respaldos_manuales or [])}
     bk = preparar_a2(a2)
@@ -165,8 +165,8 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
 
     # R3 fecha del cierre = fecha(s) de las facturas validas
     fechas = sorted({d.date() for d in fa[fa['estado_prep'] == 'VALIDA']['Fecha']})
-    if len(fechas) > 1: alertas.append(('ALERTA', '', f'Facturas con mas de una fecha: {fechas}; la ventana usa todas'))
-    if not fechas: alertas.append(('ALERTA', '', 'Sin facturas validas: no hay fecha de cierre'))
+    if len(fechas) > 1: alertas.append(('ALERTA', '', f"El reporte de facturas tiene más de una fecha ({', '.join(f'{d:%d/%m/%Y}' for d in fechas)}). Se usan todas; verifique que cargó el reporte del día correcto."))
+    if not fechas: alertas.append(('ALERTA', '', 'No hay facturas válidas en el reporte del sistema, así que no se puede determinar la fecha del cierre. Verifique el archivo cargado.'))
 
     # estado de cada movimiento
     bk['estado_banco'] = ''; bk['factura_asignada'] = ''; bk['nivel_asignado'] = ''
@@ -174,10 +174,10 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     for i, m in bk.iterrows():
         if m['dup']:
             bk.at[i, 'estado_banco'] = 'DUPLICADO EN ARCHIVO BANCO'
-            alertas.append(('ALERTA', m['ID TRANSACCION'], f"ID TRANSACCION {m['ID TRANSACCION']} repetido; solo la primera ocurrencia es utilizable"))
+            alertas.append(('ALERTA', m['ID TRANSACCION'], f"El número de transacción del banco {m['ID TRANSACCION']} aparece repetido en el reporte del banco; solo se usa la primera vez. Revise que el banco no haya duplicado el movimiento."))
         elif m['FECHA / HORA'].date() not in fechas:
             bk.at[i, 'estado_banco'] = 'FUERA DE FECHA'
-            alertas.append(('INFO', m['ID TRANSACCION'], f"Movimiento {m['ID TRANSACCION']} ({m['TITULAR ORIGEN']}, Bs {m['MONTO']:.2f}) fecha {m['FECHA / HORA']:%d/%m/%Y} fuera de la fecha del cierre"))
+            alertas.append(('INFO', m['ID TRANSACCION'], f"El movimiento del banco {m['ID TRANSACCION']} ({m['TITULAR ORIGEN']}, Bs {m['MONTO']:.2f}) es del {m['FECHA / HORA']:%d/%m/%Y}, distinto a la fecha del cierre, y no se usó."))
         else: usable.append(i)
 
     # pares con monto exacto (R4) y nivel (R7)
@@ -243,21 +243,21 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     for nf in (confirmaciones or []):
         nf = str(nf); fi = idx_f.get(nf)
         if fi is None or fa.at[fi, 'estado_conciliacion'] != 'POR CONFIRMAR':
-            alertas.append(('ALERTA', nf, f"Confirmación no aplicada: factura {nf} no está en POR CONFIRMAR"))
+            alertas.append(('ALERTA', nf, f"Confirmación no aplicada: la factura {nf} ya no tiene una coincidencia pendiente de confirmar. Revise su estado en Observadas."))
             continue
         bi = bk.index[(bk['ID TRANSACCION'] == fa.at[fi, 'ID TRANSACCION']) & (~bk['dup'])][0]
         fa.at[fi, 'estado_conciliacion'] = 'CONFIRMADA POR CAJERO'; bk.at[bi, 'estado_banco'] = 'ASIGNADO CONFIRMADA POR CAJERO'
     for nf, idt in (elecciones or {}).items():
         nf = str(nf); idt = str(idt); fi = idx_f.get(nf)
-        def rechazo(msg): alertas.append(('ALERTA', nf, f"Elección no aplicada ({nf} -> {idt}): {msg}"))
+        def rechazo(msg): alertas.append(('ALERTA', nf, f"Elección no aplicada (factura {nf}, número de transacción {idt}): {msg}"))
         if fi is None or fa.at[fi, 'estado_conciliacion'] not in ('SIN RESPALDO', 'AMBIGUO'):
-            rechazo('la factura no está SIN RESPALDO ni AMBIGUO'); continue
+            rechazo('la factura no está pendiente de asignar movimiento del banco'); continue
         cand = bk.index[(bk['ID TRANSACCION'] == idt) & (~bk['dup'])]
-        if len(cand) == 0: rechazo('ID TRANSACCION inexistente'); continue
+        if len(cand) == 0: rechazo('ese número de transacción es inexistente en el reporte del banco'); continue
         bi = cand[0]
-        if abs(bk.at[bi, 'MONTO'] - fa.at[fi, 'Monto']) > 1e-9: rechazo(f"monto distinto (banco {bk.at[bi, 'MONTO']:.2f} vs factura {fa.at[fi, 'Monto']:.2f})"); continue
-        if bk.at[bi, 'FECHA / HORA'].date() not in fechas: rechazo('fecha distinta a la del cierre'); continue
-        if bk.at[bi, 'estado_banco'].startswith('ASIGNADO'): rechazo(f"movimiento ya usado por la factura {bk.at[bi, 'factura_asignada']}"); continue
+        if abs(bk.at[bi, 'MONTO'] - fa.at[fi, 'Monto']) > 1e-9: rechazo(f"el movimiento tiene un monto distinto al de la factura (banco {bk.at[bi, 'MONTO']:.2f}, factura {fa.at[fi, 'Monto']:.2f})"); continue
+        if bk.at[bi, 'FECHA / HORA'].date() not in fechas: rechazo('el movimiento es de una fecha distinta a la del cierre'); continue
+        if bk.at[bi, 'estado_banco'].startswith('ASIGNADO'): rechazo(f"ese movimiento del banco ya fue usado por la factura {bk.at[bi, 'factura_asignada']}"); continue
         poner(fi, bi, 'CONFIRMADA POR CAJERO', 'RESPALDO MANUAL' if nf in manuales else 'ELECCIÓN CAJERO')
     # facturas AMBIGUO restantes: candidatos que sigan libres
     for fi, bis in f_amb.items():
@@ -269,7 +269,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
         else:
             ids = [bk.at[b, 'ID TRANSACCION'] for b in libres]
             fa.at[fi, 'candidatos'] = 'AMBIGUO - requiere elección del cajero: ' + ', '.join(ids)
-            alertas.append(('ALERTA', nf, f"AMBIGUO - requiere elección del cajero: factura {nf} empata con movimientos {ids}"))
+            alertas.append(('ALERTA', nf, f"La factura {nf} coincide con varios movimientos del banco ({', '.join(ids)}). Elija en Observadas cuál le corresponde."))
     for fi in qr.index:
         if fa.at[fi, 'estado_conciliacion'] == 'SIN RESPALDO':
             deb = [q for q in pares if q['fi'] == fi and not bk.at[q['bi'], 'estado_banco'].startswith('ASIGNADO')]

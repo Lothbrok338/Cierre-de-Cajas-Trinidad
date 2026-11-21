@@ -1,4 +1,4 @@
-import logging, os, secrets, tempfile
+import json, logging, os, re, secrets, tempfile
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
@@ -37,6 +37,13 @@ def create_app():
     T.env.filters.update(bs=formato.bs, fecha=formato.fecha, fecha_hora=formato.fecha_hora, hora=formato.hora)
     T.env.filters['rol_txt'] = lambda r: {'superadmin': 'Superadmin', 'ingresos': 'Ingresos', 'cajero': 'Cajero'}.get(r, r)
     T.env.globals.update(ROLES=auth.ROLES, MIN_CLAVE=auth.MIN_CLAVE, ESTADOS=servicio.ESTADOS_REVISION, BANCOS=catalogo.LISTA_BANCOS, BANCO_QR=catalogo.BANCO_QR, REGLAS={b: catalogo.regla_formato(b) for b in catalogo.LISTA_BANCOS}, MIN_OBS=servicio.MIN_OBSERVACION)
+    def nombre_completo(login):
+        """Nombre completo del usuario (tabla usuarios) para mostrar en pantalla; si ya no existe, el usuario tal cual."""
+        if not login: return login
+        r = alm.usuario_get(login)
+        return r['nombre'] if r is not None and r['nombre'] else login
+    T.env.filters['nombre_completo'] = nombre_completo
+    T.env.filters['nombre_archivo'] = lambda n: re.sub(r'^[0-9a-f]{8}-', '', str(n or ''))   # solo en pantalla: quita el prefijo hexadecimal de origen
     T.env.filters['clase_estado'] = lambda e: {'PENDIENTE DE REVISIÓN': 'ins-ambar', 'CONFORME': 'ins-verde', 'RECHAZADO': 'ins-rojo'}.get(e, 'ins-gris')
     alm: Almacen = app.state.almacen
 
@@ -194,7 +201,7 @@ def create_app():
             conf = alm.conflictos_para(res, usr['usuario'])
             if conf:
                 c = conf[0]; ev['presentable'] = False; ev['nivel'] = 'rojo'
-                ev['razones'].append(f"La factura {c['factura']} usa el ID {c['id_transaccion']}, que ya está en el cierre {c['correlativo']} (cajero {c['usuario']}).")
+                ev['razones'].append(f"La factura {c['factura']} usa el número de transacción {c['id_transaccion']}, que ya está en el cierre {c['correlativo']} (cajero {c['usuario']}).")
             for c in alm.conflictos_ci_para(res, usr['usuario']):
                 ev['presentable'] = False; ev['nivel'] = 'rojo'
                 ev['razones'].append(f"La comunicación interna de la factura {c['factura']} ({c['banco']} {c['codigo']}) ya está en el cierre {c['correlativo']} (cajero {c['usuario']}).")
@@ -220,8 +227,11 @@ def create_app():
                     ajenos=b[b['estado_banco'] == 'AJENO / NO CORRESPONDE AL CAJERO'].to_dict('records'),
                     anuladas=f[f['estado_conciliacion'].str.startswith('EXCLUIDA')].to_dict('records'),
                     tarjetas=res['tarjetas'].to_dict('records'), alertas_fmt=af,
-                    alertas=[{'nivel': 'ALERTA', 'detalle': f"FORMATO A REVISAR: factura {a['factura']}, {a['banco']}, código {a['codigo']}. Regla esperada: {a['detalle']}."} for a in af]
-                    + res['alertas'].to_dict('records'))
+                    por_confirmar=[x for x in observadas if x['estado'] == 'POR CONFIRMAR'],
+                    # las alertas INFO (anuladas, otra fecha) no se muestran al cajero: siguen en cierre.json y en la hoja Alertas del xlsx
+                    alertas=[{'nivel': 'ALERTA', 'detalle': f"Factura {a['factura']}: el código {a['codigo']} de {a['banco']} no cumple el formato esperado ({a['detalle']}). "
+                                                            f"Si lo escribió mal, deshaga el respaldo y regístrelo de nuevo; si es correcto, puede presentar igual."} for a in af]
+                    + [a for a in res['alertas'].to_dict('records') if a['nivel'] != 'INFO'])
 
     @app.get('/borrador/{bid}', response_class=HTMLResponse)
     def ver_borrador(request: Request, bid: str):
@@ -256,6 +266,30 @@ def create_app():
         est['respaldos_manuales'] = [x for x in est.get('respaldos_manuales', []) if x != nf]; (est.get('reclasificaciones') or {}).pop(nf, None)
     def _asig(est, nf, idt):
         if nf and idt: est['elecciones'][nf] = idt
+    @app.post('/borrador/{bid}/confirmar-todas')
+    def confirmar_todas(request: Request, bid: str, facturas: list[str] = Form([]), csrf: str = Form('')):
+        """Confirma de una vez las coincidencias dudosas (solo POR CONFIRMAR) listadas en el diálogo; una auditoría por factura."""
+        u, est = cargar_borrador(request, bid); verificar_csrf(request, csrf)
+        if est.get('presentado'): raise StarletteHTTPException(404, 'Este borrador ya fue presentado.')
+        pedidas = list(dict.fromkeys(x.strip() for x in facturas if x.strip()))
+        res = alm.conciliar(bid, est); f = res['facturas'].set_index('Número Factura')
+        validas = [nf for nf in pedidas if nf in f.index and f.loc[nf, 'estado_conciliacion'] == 'POR CONFIRMAR']
+        if not validas:
+            flash(request, 'No hay coincidencias dudosas para confirmar (ya cambiaron de estado). Revise la lista.', 'error'); return RedirectResponse(f'/borrador/{bid}', 303)
+        nuevo = json.loads(json.dumps(est))
+        for nf in validas:
+            if nf not in nuevo['confirmaciones']: nuevo['confirmaciones'].append(nf)
+        r2 = alm.conciliar(bid, nuevo); f2 = r2['facturas'].set_index('Número Factura')
+        ok = [nf for nf in validas if f2.loc[nf, 'estado_conciliacion'] == 'CONFIRMADA POR CAJERO']
+        nuevo['confirmaciones'] = [x for x in nuevo['confirmaciones'] if x not in validas or x in ok]
+        alm.guardar_estado(bid, nuevo)
+        for nf in ok:
+            alm.auditar(u['usuario'], 'confirmar_coincidencia', {'borrador': bid, 'factura': nf, 'id_transaccion': str(f.loc[nf, 'ID TRANSACCION']), 'lote': True,
+                                                                 'estado_qr': r2['totales']['Estado QR'], 'anterior': estado_de(est, nf)})
+        alm.auditar(u['usuario'], 'confirmar_todas', {'borrador': bid, 'facturas': ok, 'n': len(ok)})
+        flash(request, f"Se confirmaron {len(ok)} coincidencias dudosas." if len(ok) != 1 else 'Se confirmó 1 coincidencia dudosa.', 'ok')
+        return RedirectResponse(f'/borrador/{bid}', 303)
+
     app.post('/borrador/{bid}/confirmar')(accion('confirmar_coincidencia', _conf))
     app.post('/borrador/{bid}/deshacer')(accion('deshacer_confirmacion', _des))
     app.post('/borrador/{bid}/asignar')(accion('asignar_movimiento', _asig))
@@ -359,7 +393,6 @@ def create_app():
         archivos = [n for n in sorted(os.listdir(d))] if os.path.isdir(d) else []
         cj = None
         try:
-            import json
             with open(os.path.join(d, 'cierre.json'), encoding='utf-8') as f: cj = json.load(f)
         except Exception: pass
         rem = alm.cierre(c['reemplaza_a']) if c['reemplaza_a'] else None
