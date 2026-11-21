@@ -14,6 +14,15 @@ LOGO = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'logo-
 AZUL = colors.HexColor('#870B42'); GRIS = colors.HexColor('#535352'); LINEA = colors.HexColor('#d9cdd3'); FONDO = colors.HexColor('#F6E7EE')
 AMBAR = colors.HexColor('#fff1cc'); VERDE = colors.HexColor('#dff3e4'); ROJO = colors.HexColor('#f9dcdc')
 
+# Simbolo de alerta: Helvetica no tiene el glifo, se usa DejaVu Sans (incluida en app/fonts); sin la fuente se usa "(!)".
+ALERTA = '(!)'
+try:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    pdfmetrics.registerFont(TTFont('DejaVuSans', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'DejaVuSans.ttf')))
+    ALERTA = '<font name="DejaVuSans" color="#b45f00">\u26a0</font>'
+except Exception: pass
+
 _ss = getSampleStyleSheet()
 H1 = ParagraphStyle('h1', parent=_ss['Title'], fontName='Helvetica-Bold', fontSize=16, textColor=AZUL, alignment=0, spaceAfter=2)
 H2 = ParagraphStyle('h2', parent=_ss['Heading2'], fontName='Helvetica-Bold', fontSize=11, textColor=AZUL, spaceBefore=10, spaceAfter=4)
@@ -27,6 +36,12 @@ DER = ParagraphStyle('der', parent=N, alignment=TA_RIGHT)
 def _p(t, st=N):
     t = str(t if t is not None else '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     return Paragraph(t, st)
+
+
+def _pa(t, st=N):
+    """Como _p pero antepone el simbolo de alerta (el texto se escapa)."""
+    t = str(t if t is not None else '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    return Paragraph(f'{ALERTA} {t}', st)
 
 
 def _col_estado(e):
@@ -43,6 +58,8 @@ def generar(res, info, ruta):
     doc = SimpleDocTemplate(ruta, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=14 * mm, bottomMargin=14 * mm,
                             title=f"Cierre {info['correlativo']}", author='UNIVALLE')
     S = []
+    alertas = info.get('alertas_formato') or []
+    marcadas = {(a['factura'], a['banco']) for a in alertas}
     if os.path.isfile(LOGO):
         S.append(Image(LOGO, width=52 * mm, height=52 * mm * 134 / 526, hAlign='LEFT')); S.append(Spacer(1, 3))
         cab = Table([[_p('Cierre Diario de Caja', H1)]], colWidths=[178 * mm])
@@ -112,8 +129,9 @@ def generar(res, info, ruta):
     filas = [[_p(h, CB) for h in ('N° factura', 'Cliente', 'Monto (Bs)', 'ID TRANSACCION', 'Titular banco', 'Estado')]]
     est = [('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO), ('VALIGN', (0, 0), (-1, -1), 'TOP')]
     for i, (_, r) in enumerate(qr.iterrows(), start=1):
+        idc = _pa(r['ID TRANSACCION'], C) if (str(r['Número Factura']), 'QR BANECO') in marcadas else _p(r['ID TRANSACCION'] or '—', C)
         filas.append([_p(r['Número Factura'], C), _p(r['Razon Social'], C), _p(bs(r['Monto']), ParagraphStyle('r', parent=C, alignment=TA_RIGHT)),
-                      _p(r['ID TRANSACCION'] or '—', C), _p(r['TITULAR ORIGEN'] or '—', C), _p(r['estado_conciliacion'], C)])
+                      idc, _p(r['TITULAR ORIGEN'] or '—', C), _p(r['estado_conciliacion'], C)])
         if r['estado_conciliacion'] == 'CONFIRMADA POR CAJERO': est.append(('BACKGROUND', (0, i), (-1, i), AMBAR))
     ta = Table(filas, colWidths=[20 * mm, 44 * mm, 22 * mm, 26 * mm, 40 * mm, 28 * mm], repeatRows=1); ta.setStyle(TableStyle(est)); S.append(ta)
     conf = qr[qr['estado_conciliacion'] == 'CONFIRMADA POR CAJERO']
@@ -127,9 +145,18 @@ def generar(res, info, ruta):
     if res.get('ci'):
         S.append(_p('Comunicaciones internas (depósitos a otras cuentas, prevalidados por Ingresos)', H2))
         fi = [[_p(h, CB) for h in ('N° factura', 'Cliente', 'Monto (Bs)', 'Banco', 'Código de asignación')]]
-        for r in res['ci']: fi.append([_p(r['factura'], C), _p(r['razon_social'], C), _p(bs(r['monto']), ParagraphStyle('r2', parent=C, alignment=TA_RIGHT)), _p(r['banco'], C), _p(r['codigo'], C)])
+        for r in res['ci']: fi.append([_p(r['factura'], C), _p(r['razon_social'], C), _p(bs(r['monto']), ParagraphStyle('r2', parent=C, alignment=TA_RIGHT)), _p(r['banco'], C),
+                                _pa(r['codigo'], C) if (str(r['factura']), r['banco']) in marcadas else _p(r['codigo'], C)])
         x = Table(fi, colWidths=[22 * mm, 66 * mm, 24 * mm, 22 * mm, 40 * mm], repeatRows=1)
         x.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO)])); S.append(x)
+    if alertas:
+        S.append(_p('Alertas de revisión: formato del código de asignación', H2))
+        S.append(_p('Estos códigos se registraron igual, pero no cumplen el formato esperado del banco; Ingresos debe revisarlos.', NOTA))
+        fl = [[_p(h, CB) for h in ('N° factura', 'Banco', 'Código', 'Regla esperada')]]
+        for a in alertas: fl.append([_p(a['factura'], C), _p(a['banco'], C), _pa(a['codigo'], C), _p(a['detalle'], C)])
+        x = Table(fl, colWidths=[22 * mm, 24 * mm, 46 * mm, 82 * mm], repeatRows=1)
+        x.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO),
+                               ('BACKGROUND', (0, 1), (-1, -1), AMBAR)])); S.append(x)
     S.append(_p('Facturas anuladas (excluidas)', H2))
     if anul.empty: S.append(_p('Ninguna.', C))
     else:

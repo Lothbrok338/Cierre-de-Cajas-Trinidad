@@ -49,6 +49,17 @@
   {% for r in ev.razones %}<div class="banner-razon">{{ r }}</div>{% endfor %}</div>
 {% endif %}
 
+{% if alertas_fmt %}
+<section class="alertas-rev" role="alert" aria-label="Alertas de revisión">
+  <h2>⚠ Alertas de revisión ({{ alertas_fmt | length }})</h2>
+  <p>Estos códigos de asignación no cumplen el formato esperado del banco. Se registraron igual y <strong>no impiden presentar</strong>, pero Ingresos será notificado. Verifique que los haya escrito bien.</p>
+  <div class="tabla-wrap"><table class="tabla">
+    <thead><tr><th>N° factura</th><th>Banco</th><th>Código</th><th>Regla esperada</th></tr></thead>
+    <tbody>{% for a in alertas_fmt %}<tr><td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Regla esperada">{{ a.detalle }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
 <section class="kpis">
   <div class="kpi"><span class="kpi-t">QR BANECO registrado</span><span class="kpi-v">{{ t['QR registrado'] | bs }}</span><span class="kpi-s">{{ t.n_facturas_qr }} facturas</span></div>
   <div class="kpi"><span class="kpi-t">QR BANECO conciliado</span><span class="kpi-v">{{ qr_conc | bs }}</span><span class="kpi-s">automático {{ t['QR conciliado automático (CONCILIADA)'] | bs }} + confirmado {{ t['QR confirmado por cajero'] | bs }}</span></div>
@@ -88,6 +99,7 @@
           {% elif f.estado == 'COMUNICACIÓN INTERNA' %}<span class="insignia ins-guinda">Comunicación interna — {{ f.ci.banco }} {{ f.ci.codigo }}</span>
           {% elif f.manual %}<span class="insignia ins-guinda">Respaldo manual</span>
           {% else %}<span class="insignia ins-guinda">Confirmada por cajero</span>{% endif %}
+          {% if f.alerta_fmt %}<span class="alerta-fmt">⚠ <strong>FORMATO A REVISAR</strong>: {{ f.alerta_fmt.detalle }}</span>{% endif %}
         </td>
         <td data-l="Respaldo">
           {% if f.estado == 'COMUNICACIÓN INTERNA' %}<span class="tenue-t">Depósito a otra cuenta, prevalidado por Ingresos (sin cruce bancario)</span>
@@ -145,6 +157,7 @@
               </select>
               <label for="codigo-{{ f.nf }}">Código de asignación</label>
               <input id="codigo-{{ f.nf }}" name="codigo" type="text" maxlength="40" required autocomplete="off">
+              <p class="ayuda">Formato esperado: {% for b in BANCOS %}<br>· {{ REGLAS[b] }}{% endfor %}<br>Si no cumple, se registra igual y se genera una alerta de revisión para Ingresos.</p>
               <p class="ayuda">QR BANECO: el ID de transacción del reporte QR cargado (mismo monto y fecha). Otro banco: la factura pasa a <em>Comunicación interna</em> (depósito a otra cuenta, prevalidado por Ingresos).</p>
               <button class="btn btn-prim btn-sm" type="submit">Registrar respaldo</button>
             </form>
@@ -194,6 +207,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <h2>Confirmar presentación</h2>
     <p>Total del cierre: <strong>Bs {{ t['Total cierre'] | bs }}</strong> (QR BANECO {{ t['QR registrado'] | bs }}{% if t['n_COMUNICACIÓN INTERNA'] %} + comunicaciones internas {{ t['C.I. según sistema'] | bs }}{% endif %} + tarjetas {{ t['Tarjeta declarada'] | bs }}).</p>
+    {% if alertas_fmt %}<div class="aviso aviso-ambar">⚠ Hay {{ alertas_fmt | length }} {{ 'código' if alertas_fmt | length == 1 else 'códigos' }} con formato a revisar; Ingresos será notificado.</div>{% endif %}
     {% if origen %}<div class="aviso aviso-info">Se creará la versión siguiente del cierre, que <strong>reemplaza</strong> a {{ origen.correlativo }} (rechazado por Ingresos).</div>{% endif %}
     <label class="check"><input type="checkbox" name="declaro" value="1" required> Declaro que el cierre es correcto</label>
     <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-prim" data-espera="Presentando…">Presentar</button></div>

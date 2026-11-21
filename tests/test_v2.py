@@ -49,17 +49,20 @@ def test_catalogo_bancos_y_formato():
     assert (catalogo.BANCOS['BISA']['cuenta_bancaria'], catalogo.BANCOS['BISA']['cuenta_sap']) == ('696870021', '110103232')
     assert (catalogo.BANCOS['UNION']['cuenta_bancaria'], catalogo.BANCOS['UNION']['cuenta_sap']) == ('1-56089490', '110103382')
     assert catalogo.BANCOS['QR BANECO']['cuenta_bancaria'] is None and catalogo.BANCOS['QR BANECO']['cuenta_sap'] is None
-    assert all(b['formato_asignacion'] is None for b in catalogo.BANCOS.values())
+    assert all(b['formato_asignacion'] and b['ayuda'] for b in catalogo.BANCOS.values())
+    # el formato por banco es solo alerta: validar_codigo solo bloquea vacío, longitud 3-40 y caracteres de control
     assert catalogo.validar_codigo('BNB', ' dep-12/3.4 ') == (True, None, 'DEP-12/3.4')
-    for malo in ('', '   ', 'ab', 'a b c', 'x' * 41, 'ñandú1', 'abc#12'):
+    assert catalogo.validar_codigo('BNB', 'ñandú1')[0] and catalogo.validar_codigo('BNB', 'a b c')[0]
+    for malo in ('', '   ', 'ab', 'x' * 41, 'AB\nC12'):
         assert not catalogo.validar_codigo('BNB', malo)[0], malo
     assert not catalogo.validar_codigo('NOEXISTE', 'ABC123')[0] and not catalogo.validar_codigo('QR BANECO', 'ABC123')[0]
 
 
-def test_catalogo_formato_por_banco_listo(monkeypatch):
-    monkeypatch.setitem(catalogo.BANCOS['BISA'], 'formato_asignacion', r'\d{8}')
-    assert catalogo.validar_codigo('BISA', '12345678')[0] and not catalogo.validar_codigo('BISA', 'ABC-123')[0]
-    assert catalogo.validar_codigo('BNB', 'ABC-123')[0]    # los demás siguen con la regla genérica
+def test_catalogo_formato_por_banco_alerta(monkeypatch):
+    assert catalogo.formato_incumplido('BNB', 'ab12P') is None and catalogo.formato_incumplido('BNB', 'ABC-123') == 'BNB: letras y números, debe incluir una P'
+    monkeypatch.setitem(catalogo.BANCOS['BISA'], 'formato_asignacion', r'[0-9]{8}')
+    assert catalogo.formato_incumplido('BISA', '12345678') is None and catalogo.formato_incumplido('BISA', '123')
+    assert catalogo.validar_codigo('BISA', 'ABC-123')[0]    # nunca bloquea
 
 
 # ---------- motor: reclasificación ----------
@@ -198,7 +201,7 @@ def test_reclasificar_a_ci(app, sint):
 
 def test_ci_codigo_invalido_o_repetido_en_borrador(app, sint_extra):
     c, bid = borrador_nuevo(app, sint_extra, tarjeta='200')
-    for malo in ('', 'ab', 'a b c', 'x' * 41):
+    for malo in ('', 'ab', 'x' * 41):
         respaldo(c, bid, '30003', 'BNB', malo)
         assert leer_estado(app, bid)['reclasificaciones'] == {}, malo
     respaldo(c, bid, '30003', 'BNB', 'ABC-1'); assert 'reclasificaciones' in leer_estado(app, bid) and len(leer_estado(app, bid)['reclasificaciones']) == 1

@@ -24,6 +24,22 @@
 <div class="aviso aviso-info">Pendiente de revisión por Ingresos. Mientras esté pendiente no puede modificarse.</div>
 {% endif %}
 
+{% if alertas_c %}
+<section class="alertas-rev" id="alertas-revision" aria-label="Alertas de revisión">
+  <h2>⚠ Alertas de revisión ({{ alertas_c | length }}{% if n_alertas_pend != alertas_c | length %}, {{ n_alertas_pend }} sin revisar{% endif %})</h2>
+  <p>Códigos de asignación que no cumplen el formato esperado del banco. El cajero los registró igual; no bloquean la aprobación.</p>
+  <div class="tabla-wrap"><table class="tabla">
+    <thead><tr><th>N° factura</th><th>Banco</th><th>Código</th><th>Regla esperada</th><th>Estado</th></tr></thead>
+    <tbody>{% for a in alertas_c %}<tr>
+      <td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Regla esperada">{{ a.detalle }}</td>
+      <td data-l="Estado">{% if a.revisada_en %}<span class="insignia ins-verde">Revisada</span><br><small>{{ a.revisada_por }} · {{ a.revisada_en | fecha_hora }}</small>
+        {% elif es_ingresos %}<form method="post" action="/cierres/{{ c.id }}/alertas/{{ a.id }}/revisar" class="en-linea"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sec btn-sm" type="submit">Marcar como revisada</button></form>
+        {% else %}<span class="insignia ins-alerta">⚠ Por revisar</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+{% endif %}
+
 {% if es_super and c.estado_revision in ('CONFORME', 'RECHAZADO') %}
 <section class="tarjeta revision-ing" aria-label="Revertir revisión">
   <h2>Revertir revisión <small>(solo superadmin)</small></h2>
@@ -56,6 +72,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="decision" value="aprobar">
     <h2>Aprobar el cierre {{ c.correlativo }}</h2>
     <p>El cierre quedará <strong>CONFORME</strong> y ya no podrá modificarse.</p>
+    {% if n_alertas_pend %}<div class="aviso aviso-ambar">⚠ Hay {{ n_alertas_pend }} {{ 'alerta sin revisar' if n_alertas_pend == 1 else 'alertas sin revisar' }} de formato de código. Puede aprobar igual, pero revíselas antes si corresponde.</div>{% endif %}
     <label for="obs-ap">Observación (opcional)</label><textarea id="obs-ap" name="observacion" rows="2"></textarea>
     <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-ok" data-espera="Guardando…">Aprobar</button></div>
   </form>

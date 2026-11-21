@@ -29,6 +29,7 @@ input:focus,textarea:focus,button:focus-visible,summary:focus-visible{outline:3p
 .formulario{max-width:720px}.campo{margin-bottom:1rem}.formulario label{margin-top:0}
 .aviso{padding:.7rem 1rem;border-radius:6px;margin:.8rem 0;border:1px solid}
 .aviso-error{background:var(--rojo-c);border-color:#e3a6a6;color:#6f1414}.aviso-ok{background:var(--verde-c);border-color:#9fd3ae;color:#14502a}
+.aviso-ambar{background:var(--ambar-c);border-color:#d99a00;color:#5e3d00}
 .aviso-info{background:var(--g-c);border-color:#dcb0c5;color:var(--g-osc)}
 .banner{padding:1rem 1.2rem;border-radius:8px;font-size:1.1rem;margin:.6rem 0 1rem;border-left:8px solid}
 .banner-verde{background:var(--verde-c);border-color:var(--verde);color:#0f4a24}
@@ -105,3 +106,9 @@ select{width:100%}
 .detalle-json{font-size:.8rem;word-break:break-word;white-space:normal;max-width:48rem}
 .acciones details.manual form{margin-top:.4rem}
 .nav{flex-wrap:wrap;row-gap:.2rem}
+
+.alerta-fmt{display:block;margin-top:.35rem;padding:.3rem .5rem;border-radius:5px;background:var(--ambar-c);border:1px solid #d99a00;color:#5e3d00;font-size:.85rem}
+.alertas-rev{background:var(--ambar-c);border:2px solid #d99a00;border-radius:8px;padding:.8rem 1rem;margin:1rem 0;color:#3f2900}
+.alertas-rev h2{margin:.1rem 0 .4rem;color:#5e3d00}.alertas-rev ul{margin:.3rem 0;padding-left:1.1rem}.alertas-rev li{margin:.35rem 0}
+.alertas-rev table{background:#fff}.alertas-rev .en-linea{display:inline}
+.ins-alerta{background:var(--ambar-c);color:#5e3d00;border-color:#d99a00;font-weight:700}

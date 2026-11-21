@@ -36,7 +36,7 @@ def create_app():
     T = Jinja2Templates(directory=os.path.join(AQUI, 'templates'))
     T.env.filters.update(bs=formato.bs, fecha=formato.fecha, fecha_hora=formato.fecha_hora, hora=formato.hora)
     T.env.filters['rol_txt'] = lambda r: {'superadmin': 'Superadmin', 'ingresos': 'Ingresos', 'cajero': 'Cajero'}.get(r, r)
-    T.env.globals.update(ROLES=auth.ROLES, MIN_CLAVE=auth.MIN_CLAVE, ESTADOS=servicio.ESTADOS_REVISION, BANCOS=catalogo.LISTA_BANCOS, BANCO_QR=catalogo.BANCO_QR, MIN_OBS=servicio.MIN_OBSERVACION)
+    T.env.globals.update(ROLES=auth.ROLES, MIN_CLAVE=auth.MIN_CLAVE, ESTADOS=servicio.ESTADOS_REVISION, BANCOS=catalogo.LISTA_BANCOS, BANCO_QR=catalogo.BANCO_QR, REGLAS={b: catalogo.regla_formato(b) for b in catalogo.LISTA_BANCOS}, MIN_OBS=servicio.MIN_OBSERVACION)
     T.env.filters['clase_estado'] = lambda e: {'PENDIENTE DE REVISIÓN': 'ins-ambar', 'CONFORME': 'ins-verde', 'RECHAZADO': 'ins-rojo'}.get(e, 'ins-gris')
     alm: Almacen = app.state.almacen
 
@@ -132,9 +132,10 @@ def create_app():
             except ValueError: return ''
         desde, hasta = f_ok(q.get('desde', '')), f_ok(q.get('hasta', ''))
         es_ing = u['rol'] in ('ingresos', 'superadmin')
-        filas = alm.cierres_de(None if es_ing else u['usuario'], estado or None, desde or None, hasta or None)
+        con_al = es_ing and q.get('alertas', '') == '1'
+        filas = alm.cierres_de(None if es_ing else u['usuario'], estado or None, desde or None, hasta or None, con_al)
         return render(request, 'mis_cierres.html', cierres=filas, todos=es_ing, f_estado=estado, f_desde=desde, f_hasta=hasta,
-                      filtrado=bool(estado or desde or hasta))
+                      f_alertas=con_al, filtrado=bool(estado or desde or hasta or con_al))
 
     # ---------------- nuevo cierre ----------------
     @app.get('/nuevo', response_class=HTMLResponse)
@@ -201,13 +202,14 @@ def create_app():
             if bloqueo: ev['presentable'] = False; ev['nivel'] = 'rojo'; ev['razones'].append(bloqueo)
         f = res['facturas']; b = res['banco']; qr = f[f['Tipo (motor)'].isin(['QR', 'C.I.'])]
         ci = {r['factura']: r for r in res.get('ci', [])}
+        af = servicio.alertas_formato(res, est); af_por_nf = {a['factura']: a for a in af}
         filas = []
         for _, r in qr.iterrows():
             nf = r['Número Factura']; e = r['estado_conciliacion']; nivel = r['nivel']
             obs = e in servicio.OBSERVADAS
             filas.append({'nf': nf, 'cliente': r['Razon Social'], 'estudiante': r['Nombre Estudiante'], 'monto': r['Monto'], 'hora': r['hora_factura'],
                           'estado': e, 'nivel': nivel, 'id': r['ID TRANSACCION'], 'titular': r['TITULAR ORIGEN'], 'hora_banco': r['hora_banco'],
-                          'observada': obs, 'manual': nivel == 'RESPALDO MANUAL', 'ci': ci.get(nf),
+                          'observada': obs, 'manual': nivel == 'RESPALDO MANUAL', 'ci': ci.get(nf), 'alerta_fmt': af_por_nf.get(str(nf)),
                           'deshacer': e == 'CONFIRMADA POR CAJERO' or e == 'COMUNICACIÓN INTERNA',
                           'candidatos': servicio.candidatos(res, nf) if e in ('SIN RESPALDO', 'AMBIGUO') else []})
         observadas = [x for x in filas if x['observada']]; conciliadas = [x for x in filas if not x['observada']]
@@ -217,7 +219,9 @@ def create_app():
                     qr_conc=t['QR conciliado automático (CONCILIADA)'] + t['QR confirmado por cajero'],
                     ajenos=b[b['estado_banco'] == 'AJENO / NO CORRESPONDE AL CAJERO'].to_dict('records'),
                     anuladas=f[f['estado_conciliacion'].str.startswith('EXCLUIDA')].to_dict('records'),
-                    tarjetas=res['tarjetas'].to_dict('records'), alertas=res['alertas'].to_dict('records'))
+                    tarjetas=res['tarjetas'].to_dict('records'), alertas_fmt=af,
+                    alertas=[{'nivel': 'ALERTA', 'detalle': f"FORMATO A REVISAR: factura {a['factura']}, {a['banco']}, código {a['codigo']}. Regla esperada: {a['detalle']}."} for a in af]
+                    + res['alertas'].to_dict('records'))
 
     @app.get('/borrador/{bid}', response_class=HTMLResponse)
     def ver_borrador(request: Request, bid: str):
@@ -268,7 +272,12 @@ def create_app():
             flash(request, str(e), 'error'); return RedirectResponse(f'/borrador/{bid}', 303)
         alm.guardar_estado(bid, nuevo)
         alm.auditar(u['usuario'], 'respaldo_manual', {'borrador': bid, 'factura': nf, **info, 'anterior': antes})
-        flash(request, f"Factura {nf}: respaldo manual registrado ({info['banco']} {info['codigo']}).", 'ok')
+        msg = f"Factura {nf}: respaldo manual registrado ({info['banco']} {info['codigo']})."
+        regla = catalogo.formato_incumplido(info['banco'], info['codigo'])
+        if regla:
+            alm.auditar(u['usuario'], 'alerta_formato', {'borrador': bid, 'factura': nf, 'banco': info['banco'], 'codigo': info['codigo'], 'regla': regla})
+            flash(request, f"{msg} FORMATO A REVISAR: se registró igual, pero no cumple la regla esperada ({regla}). Ingresos será notificado al presentar.", 'ambar')
+        else: flash(request, msg, 'ok')
         return RedirectResponse(f'/borrador/{bid}', 303)
 
     @app.post('/borrador/{bid}/tarjeta')
@@ -346,6 +355,7 @@ def create_app():
             try: posterior = con.execute('SELECT id, correlativo FROM cierres WHERE reemplaza_a=?', (c['id'],)).fetchone()
             finally: con.close()
         conc = (cj or {}).get('conceptos', [])
+        alertas_c = [dict(a) for a in alm.alertas_de(cid)]
         extracto = None
         if u['rol'] in ('ingresos', 'superadmin'):
             movs = alm.movimientos_cierre(cid)
@@ -355,6 +365,7 @@ def create_app():
                             'liberar': servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs, 'LIBERAR')[0] if u['rol'] == 'superadmin' else None}
         return render(request, 'cierre.html', c=c, archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc, extracto=extracto,
                       total=servicio.total_conceptos(conc) if cj else None, ci=(cj or {}).get('comunicaciones_internas', []),
+                      alertas_c=alertas_c, n_alertas_pend=sum(1 for a in alertas_c if not a['revisada_en']),
                       es_ingresos=u['rol'] in ('ingresos', 'superadmin'), es_super=u['rol'] == 'superadmin',
                       es_dueno=u['rol'] in ('cajero', 'superadmin') and c['usuario'] == u['usuario'],
                       historial=alm.historial(cid) if u['rol'] in ('ingresos', 'superadmin') else [])
@@ -373,6 +384,17 @@ def create_app():
             flash(request, str(e), 'error'); return RedirectResponse(f'/cierres/{cid}', 303)
         flash(request, f"Cierre {c['correlativo']} marcado como {d}.", 'ok')
         return RedirectResponse(f'/cierres/{cid}', 303)
+
+    @app.post('/cierres/{cid}/alertas/{aid}/revisar')
+    def revisar_alerta(request: Request, cid: int, aid: int, csrf: str = Form('')):
+        u = ingresos(request); verificar_csrf(request, csrf)
+        if alm.cierre(cid) is None: raise StarletteHTTPException(404, 'No se encontró el cierre.')
+        try:
+            a = alm.revisar_alerta(cid, aid, u['usuario'])
+            flash(request, f"Alerta de la factura {a['factura']} ({a['banco']} {a['codigo']}) marcada como revisada.", 'ok')
+        except ErrorUsuario as e:
+            flash(request, str(e), 'error')
+        return RedirectResponse(f'/cierres/{cid}#alertas-revision', 303)
 
     @app.post('/cierres/{cid}/revertir')
     def revertir(request: Request, cid: int, motivo: str = Form(''), csrf: str = Form('')):

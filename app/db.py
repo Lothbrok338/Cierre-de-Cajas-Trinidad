@@ -51,6 +51,14 @@ CREATE TABLE IF NOT EXISTS revisiones_historial (
   estado_anterior TEXT, estado_nuevo TEXT, observacion TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_rh_cierre ON revisiones_historial(cierre_id);
+CREATE TABLE IF NOT EXISTS alertas_cierre (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cierre_id INTEGER NOT NULL REFERENCES cierres(id),
+  tipo TEXT NOT NULL, factura TEXT, banco TEXT, codigo TEXT, detalle TEXT,
+  creado_en TEXT NOT NULL,
+  revisada_por TEXT, revisada_en TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_ac_cierre ON alertas_cierre(cierre_id);
 CREATE INDEX IF NOT EXISTS ix_aud_momento ON auditoria(momento);
 """
 
@@ -72,7 +80,7 @@ MIGRACIONES = [
     ('cierres', 'revisado_en', 'TEXT'),
     ('cierres', 'observacion_revision', 'TEXT'),
 ]
-VERSION_ESQUEMA = 3
+VERSION_ESQUEMA = 4   # v4: tabla alertas_cierre (alertas de formato del codigo de asignacion)
 
 
 def migrar(con):

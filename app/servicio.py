@@ -234,15 +234,44 @@ class Almacen:
             if c: out.append({'factura': r['factura'], 'banco': r['banco'], 'codigo': r['codigo'], **c})
         return out
 
-    def cierres_de(self, usuario=None, estado=None, desde=None, hasta=None):
-        q = 'SELECT * FROM cierres WHERE 1=1'; a = []
-        if usuario: q += ' AND usuario=?'; a.append(usuario)
-        if estado: q += ' AND estado_revision=?'; a.append(estado)
-        if desde: q += ' AND fecha_cierre>=?'; a.append(desde)
-        if hasta: q += ' AND fecha_cierre<=?'; a.append(hasta)
+    def cierres_de(self, usuario=None, estado=None, desde=None, hasta=None, con_alertas=False):
+        q = ('SELECT c.*, (SELECT COUNT(*) FROM alertas_cierre a WHERE a.cierre_id=c.id) AS n_alertas, '
+             '(SELECT COUNT(*) FROM alertas_cierre a WHERE a.cierre_id=c.id AND a.revisada_en IS NULL) AS n_alertas_pend '
+             'FROM cierres c WHERE 1=1'); a = []
+        if con_alertas: q += ' AND EXISTS (SELECT 1 FROM alertas_cierre a WHERE a.cierre_id=c.id)'
+
+        if usuario: q += ' AND c.usuario=?'; a.append(usuario)
+        if estado: q += ' AND c.estado_revision=?'; a.append(estado)
+        if desde: q += ' AND c.fecha_cierre>=?'; a.append(desde)
+        if hasta: q += ' AND c.fecha_cierre<=?'; a.append(hasta)
         con = self.con()
-        try: return con.execute(q + ' ORDER BY id DESC', a).fetchall()
+        try: return con.execute(q + ' ORDER BY c.id DESC', a).fetchall()
         finally: con.close()
+
+    def alertas_de(self, cid):
+        con = self.con()
+        try: return con.execute('SELECT * FROM alertas_cierre WHERE cierre_id=? ORDER BY id', (cid,)).fetchall()
+        finally: con.close()
+
+    def revisar_alerta(self, cid, aid, usuario):
+        """Ingresos/superadmin marca una alerta del cierre como Revisada (usuario y momento; queda en auditoria)."""
+        con = self.con(); momento = db.ahora()
+        try:
+            con.execute('BEGIN IMMEDIATE')
+            a = con.execute('SELECT a.*, c.correlativo FROM alertas_cierre a JOIN cierres c ON c.id=a.cierre_id WHERE a.id=? AND a.cierre_id=?', (aid, cid)).fetchone()
+            if a is None: raise ErrorUsuario('No se encontró la alerta.')
+            if a['revisada_en']: raise ErrorUsuario(f"La alerta de la factura {a['factura']} ya fue revisada por {a['revisada_por']}.")
+            con.execute('UPDATE alertas_cierre SET revisada_por=?, revisada_en=? WHERE id=?', (usuario, momento, aid))
+            con.execute('INSERT INTO auditoria (momento, usuario, accion, detalle_json) VALUES (?,?,?,?)',
+                        (momento, usuario, 'alerta_revisada', json.dumps({'correlativo': a['correlativo'], 'cierre': cid, 'alerta': aid, 'tipo': a['tipo'],
+                                                                         'factura': a['factura'], 'banco': a['banco'], 'codigo': a['codigo']}, ensure_ascii=False)))
+            con.execute('COMMIT')
+        except BaseException:
+            try: con.execute('ROLLBACK')
+            except Exception: pass
+            raise
+        finally: con.close()
+        return a
 
     def cierre(self, cid):
         con = self.con()
@@ -284,6 +313,7 @@ class Almacen:
                 c = confl_ci[0]
                 raise ErrorUsuario(f"La comunicación interna de la factura {c['factura']} ({c['banco']} {c['codigo']}) ya está registrada en el cierre "
                                    f"{c['correlativo']} (cajero {c['usuario']}). No se puede presentar.")
+            alertas = alertas_formato(res, est)
             ahora = datetime.now(); presentado_en = ahora.strftime('%Y-%m-%d %H:%M:%S')
             version = (prev['version'] + 1) if prev else 1
             if prev:  # versiones previas (incluidas ya reemplazadas) -> max
@@ -306,13 +336,13 @@ class Almacen:
             info = {'correlativo': corr, 'fecha_cierre': fc, 'caja': est.get('caja', ''), 'usuario': usuario, 'nombre': nombre,
                     'presentado_en': presentado_en, 'version': version, 'sha256_movimiento': h_mov, 'sha256_banco': h_ban,
                     'estado_revision': ESTADO_INICIAL, 'reemplaza_a': prev['correlativo'] if prev else None,
-                    'motivo_reemplazo': (motivo_reemplazo or '').strip() or None}
+                    'motivo_reemplazo': (motivo_reemplazo or '').strip() or None, 'alertas_formato': alertas}
             pdf.generar(res, info, os.path.join(destino, 'cierre.pdf'))
             cj = {**info, 'archivo_movimiento': mov, 'estado_revision': ESTADO_INICIAL, 'reemplaza_a': prev['correlativo'] if prev else None,
                   'motivo_reemplazo': (motivo_reemplazo or '').strip() or None, 'estado_qr': t['Estado QR'],
                   'conceptos': conceptos(t), 'totales': t, 'confirmaciones': est['confirmaciones'], 'elecciones': est['elecciones'],
                   'reclasificaciones': est.get('reclasificaciones') or {}, 'respaldos_manuales': est.get('respaldos_manuales') or [],
-                  'comunicaciones_internas': res.get('ci', []),
+                  'comunicaciones_internas': res.get('ci', []), 'alertas_formato': alertas,
                   'tarjeta_declarada_por_cajero': est['tarjeta'], 'declaracion': 'El cajero declara conforme el presente cierre.',
                   'facturas': registros(res['facturas']),
                   'sha256_archivos': {n: sha256(os.path.join(destino, n)) for n in ('conciliacion.xlsx', 'cierre.pdf')}}
@@ -332,10 +362,14 @@ class Almacen:
                 con.execute('INSERT INTO cierre_movimientos VALUES (?,?,?,?)', (cid, str(r['ID TRANSACCION']), str(r['Número Factura']), float(r['Monto'])))
             for r in res.get('ci', []):
                 con.execute('INSERT INTO cierre_ci VALUES (?,?,?,?,?)', (cid, r['factura'], r['banco'], catalogo.normalizar_codigo(r['codigo']), r['monto']))
+            for a in alertas:
+                con.execute('INSERT INTO alertas_cierre (cierre_id, tipo, factura, banco, codigo, detalle, creado_en) VALUES (?,?,?,?,?,?,?)',
+                            (cid, a['tipo'], a['factura'], a['banco'], a['codigo'], a['detalle'], presentado_en))
             if prev: con.execute("UPDATE cierres SET estado_revision='REEMPLAZADO' WHERE id=?", (prev['id'],))
             con.execute('INSERT INTO auditoria (momento, usuario, accion, detalle_json) VALUES (?,?,?,?)',
                         (presentado_en, usuario, 'presentar_cierre', json.dumps({'correlativo': corr, 'version': version, 'borrador': bid,
-                         'reemplaza': prev['correlativo'] if prev else None, 'motivo': cj['motivo_reemplazo']}, ensure_ascii=False)))
+                         'reemplaza': prev['correlativo'] if prev else None, 'motivo': cj['motivo_reemplazo'],
+                         'alertas_formato': len(alertas)}, ensure_ascii=False)))
             con.execute('COMMIT')
         except BaseException:
             try: con.execute('ROLLBACK')
@@ -540,6 +574,7 @@ class Almacen:
                               respaldos_manuales=cj.get('respaldos_manuales') or None)
         info = {k: cj.get(k) for k in ('correlativo', 'fecha_cierre', 'caja', 'usuario', 'nombre', 'presentado_en', 'version',
                                        'sha256_movimiento', 'sha256_banco', 'motivo_reemplazo')}
+        info['alertas_formato'] = cj.get('alertas_formato') or []
         info.update(estado_revision=c['estado_revision'], revisado_por=c['revisado_por'], revisado_en=c['revisado_en'],
                     observacion_revision=c['observacion_revision'], reemplaza_a=cj.get('reemplaza_a'))
         destino = os.path.join(d, 'cierre_revision.pdf')
@@ -640,6 +675,26 @@ def evaluar(res):
     else: nivel = 'verde'
     if razones and nivel == 'verde': nivel = 'rojo'
     return {'presentable': not razones, 'razones': razones, 'nivel': nivel}
+
+
+TIPO_FORMATO = 'FORMATO'
+
+
+def alertas_formato(res, est):
+    """Alertas NO bloqueantes de formato del codigo de asignacion (regla por banco, ver catalogo).
+    Revisa las C.I. (codigo de otro banco) y los respaldos manuales QR BANECO (ID de transaccion escrito por el cajero).
+    `est` es el estado del borrador (o el cierre.json): usa 'respaldos_manuales'. Lista de dicts {tipo, factura, banco, codigo, detalle}."""
+    out = []
+    for r in res.get('ci', []):
+        cn = catalogo.normalizar_codigo(r['codigo']); regla = catalogo.formato_incumplido(r['banco'], cn)
+        if regla: out.append({'tipo': TIPO_FORMATO, 'factura': str(r['factura']), 'banco': r['banco'], 'codigo': cn, 'detalle': regla})
+    manuales = set(est.get('respaldos_manuales') or [])
+    if manuales:
+        f = res['facturas']
+        for _, r in f[f['Número Factura'].astype(str).isin(manuales) & (f['estado_conciliacion'] == 'CONFIRMADA POR CAJERO')].iterrows():
+            cn = catalogo.normalizar_codigo(str(r['ID TRANSACCION'])); regla = catalogo.formato_incumplido(catalogo.BANCO_QR, cn)
+            if regla: out.append({'tipo': TIPO_FORMATO, 'factura': str(r['Número Factura']), 'banco': catalogo.BANCO_QR, 'codigo': cn, 'detalle': regla})
+    return out
 
 
 def candidatos(res, nf):
