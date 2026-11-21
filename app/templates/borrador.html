@@ -141,13 +141,19 @@
             <div class="comparar"><div><small>Titular del banco</small><br><strong>{{ f.titular }}</strong></div>
             <div><small>Razón social / estudiante</small><br><strong>{{ f.cliente }}</strong><br>{{ f.estudiante }}</div></div>
             {{ post_form('confirmar', f.nf, 'Sí, corresponde') }}
+            <button class="btn btn-sec btn-sm" type="button" data-abrir="dlg-desc-{{ f.nf }}">No corresponde</button>
           {% else %}
-            <details class="desplegable"><summary>{{ 'Elegir movimiento del banco' if f.candidatos else 'Sin movimientos posibles' }}</summary>
+            {% if f.descartes %}<div class="descartado">
+              {% for d in f.descartes %}<div>Usted descartó el pago <span class="mono">{{ d.id }}</span> de {{ d.titular }} para esta factura.</div>{% endfor %}
+              {{ post_form('deshacer-descarte', f.nf, 'Deshacer descarte', 'btn-sec') }}</div>{% endif %}
+            {% set elegibles = f.candidatos | rejectattr('descartado') | list %}
+            <details class="desplegable"><summary>{{ 'Elegir movimiento del banco' if elegibles else 'Sin movimientos posibles' }}</summary>
             {% if f.candidatos %}
               <p class="ayuda">Movimientos del banco con el mismo monto y el mismo día, sin usar:</p>
               <ul class="cands">{% for c in f.candidatos %}
                 <li><div><strong>{{ c.titular }}</strong><br><small>{{ c.hora | hora }} · ID <span class="mono">{{ c.id }}</span></small></div>
-                {{ post_form('asignar', f.nf, 'Asignar', 'btn-prim', c.id) }}</li>{% endfor %}</ul>
+                {% if c.descartado %}<span class="insignia ins-ambar">Descartado por usted</span>{% else %}{{ post_form('asignar', f.nf, 'Asignar', 'btn-prim', c.id) }}{% endif %}</li>{% endfor %}</ul>
+              {% if not elegibles %}<p class="ayuda">No hay otro movimiento posible. Registre un respaldo manual o reclasifique la factura.</p>{% endif %}
             {% else %}<p class="ayuda">No hay ningún movimiento del banco con ese monto ese día. Averigüe qué pasó (pago no recibido, factura mal registrada, etc.) o registre un respaldo manual.</p>{% endif %}
             </details>
           {% endif %}
@@ -214,6 +220,7 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <h2>Confirmar {{ por_confirmar | length }} coincidencias dudosas</h2>
     <p>Para cada factura, compare el cliente con el titular de la cuenta del banco. Al aceptar, confirma que <strong>todas</strong> corresponden.</p>
+    <p class="ayuda">Si alguna no corresponde, cierre este aviso y use «No corresponde» en esa factura.</p>
     <div class="tabla-wrap"><table class="tabla">
       <thead><tr><th>N° factura</th><th>Cliente</th><th>Titular del banco</th><th class="num">Monto (Bs)</th></tr></thead>
       <tbody>{% for f in por_confirmar %}<tr><td data-l="N° factura"><strong>{{ f.nf }}</strong><input type="hidden" name="facturas" value="{{ f.nf }}"></td><td data-l="Cliente">{{ f.cliente }}</td><td data-l="Titular del banco">{{ f.titular }}</td><td data-l="Monto (Bs)" class="num">{{ f.monto | bs }}</td></tr>{% endfor %}</tbody>
@@ -222,6 +229,17 @@
   </form>
 </dialog>
 {% endif %}
+
+{% for f in por_confirmar %}
+<dialog id="dlg-desc-{{ f.nf }}">
+  <form method="post" action="/borrador/{{ bid }}/descartar">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="factura" value="{{ f.nf }}">
+    <h2>El pago no corresponde</h2>
+    <p>El pago <strong class="mono">{{ f.id }}</strong> de <strong>{{ f.titular }}</strong> no corresponde a la factura <strong>{{ f.nf }}</strong>. Podrá elegir otro pago o reclasificarla.</p>
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-prim" data-espera="Descartando…">Sí, no corresponde</button></div>
+  </form>
+</dialog>
+{% endfor %}
 
 <dialog id="dlg-presentar">
   <form method="post" action="/borrador/{{ bid }}/presentar">

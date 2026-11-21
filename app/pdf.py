@@ -147,6 +147,10 @@ def generar(res, info, ruta):
             how = {'ELECCIÓN CAJERO': 'asignación elegida por el cajero', 'RESPALDO MANUAL': 'respaldo manual (ID de transacción indicado por el cajero)'}.get(
                 r['nivel'], 'coincidencia parcial confirmada por el cajero')
             S.append(_p(f"Factura {r['Número Factura']} (Bs {bs(r['Monto'])}) ↔ ID {r['ID TRANSACCION']} · titular banco «{r['TITULAR ORIGEN']}» · cliente «{r['Razon Social']}» / estudiante «{r['Nombre Estudiante']}» · {how}.".replace('↔', '-'), C))
+    notas = info.get('notas_descartes') or []
+    if notas:
+        S.append(_p('Coincidencias sugeridas descartadas por el cajero', H2))
+        for n in notas: S.append(_p(n['texto'], C))
     if res.get('ci'):
         S.append(_p('Comunicaciones internas (depósitos a otras cuentas, prevalidados por Ingresos)', H2))
         fi = [[_p(h, CB) for h in ('N° factura', 'Cliente', 'Monto (Bs)', 'Banco', 'Código de asignación')]]

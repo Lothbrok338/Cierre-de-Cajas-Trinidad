@@ -139,13 +139,15 @@ def clasif_nombre(titular, razon, estudiante, cfg=CONFIG):
 
 # ---------------- motor ----------------
 def conciliar(ruta_a1, ruta_a2, tarjeta_declarada, confirmaciones=None, elecciones=None, conformidad=None, motivo=None, cfg=CONFIG,
-              reclasificaciones=None, respaldos_manuales=None):
+              reclasificaciones=None, respaldos_manuales=None, rechazos=None):
     return conciliar_df(parse_a1(ruta_a1), parse_a2(ruta_a2), tarjeta_declarada, confirmaciones, elecciones, conformidad, motivo, cfg,
-                        reclasificaciones, respaldos_manuales)
+                        reclasificaciones, respaldos_manuales, rechazos)
 
 def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None, conformidad=None, motivo=None, cfg=CONFIG,
-                 reclasificaciones=None, respaldos_manuales=None):
-    """confirmaciones: lista de Número Factura (POR CONFIRMAR). elecciones: {Número Factura: ID TRANSACCION}.
+                 reclasificaciones=None, respaldos_manuales=None, rechazos=None):
+    """rechazos: {Número Factura: [ID TRANSACCION descartados por el cajero]}. Un par (factura, movimiento) rechazado se excluye del cruce
+    como si no existiera (el movimiento queda libre para otras facturas). Con rechazos vacío el resultado no cambia.
+    confirmaciones: lista de Número Factura (POR CONFIRMAR). elecciones: {Número Factura: ID TRANSACCION}.
     reclasificaciones: {Número Factura: {'banco': ..., 'codigo': ...}} -> la factura QR se reclasifica como Comunicación interna
     (C.I.) y sale del cruce QR. respaldos_manuales: lista de facturas cuya elección es un respaldo manual (nivel RESPALDO MANUAL).
     conformidad: None | 'CONFORME' | 'NO CONFORME' (+ motivo). Lanza ValueError si no es valida."""
@@ -180,13 +182,31 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
             alertas.append(('INFO', m['ID TRANSACCION'], f"El movimiento del banco {m['ID TRANSACCION']} ({m['TITULAR ORIGEN']}, Bs {m['MONTO']:.2f}) es del {m['FECHA / HORA']:%d/%m/%Y}, distinto a la fecha del cierre, y no se usó."))
         else: usable.append(i)
 
+    # descartes del cajero: pares (factura, movimiento) que no deben cruzarse
+    rech = {}
+    for nf, ids in (rechazos or {}).items():
+        for idt in (ids if isinstance(ids, (list, tuple, set)) else [ids]):
+            rech.setdefault(str(nf), set()).add(str(idt))
+    descartes = []
+    for nf, ids in rech.items():
+        mf = fa.index[(fa['Número Factura'] == nf) & (fa['estado_prep'] == 'VALIDA')]
+        for idt in sorted(ids):
+            mb = bk.index[(bk['ID TRANSACCION'] == idt) & (~bk['dup'])]
+            if len(mf) == 0 or len(mb) == 0:
+                alertas.append(('ALERTA', nf, f"Descarte no aplicado: la factura {nf} o el número de transacción {idt} ya no existen en los archivos cargados."))
+                continue
+            m = bk.loc[mb[0]]
+            descartes.append({'factura': nf, 'id': idt, 'titular': m['TITULAR ORIGEN'], 'hora': m['FECHA / HORA'], 'monto': float(m['MONTO'])})
+
     # pares con monto exacto (R4) y nivel (R7)
     pares = []
     for fi, f in qr.iterrows():
         hf = f['Fecha'].replace(microsecond=0)
+        rf = rech.get(str(f['Número Factura']), ())
         for bi in usable:
             m = bk.loc[bi]
             if abs(f['Monto'] - m['MONTO']) > 1e-9: continue
+            if m['ID TRANSACCION'] in rf: continue         # descartado por el cajero: se trata como si no existiera
             sc, cl = clasif_nombre(m['TITULAR ORIGEN'], f['Razon Social'], f['Nombre Estudiante'], cfg)
             dif = (hf - m['FECHA / HORA']).total_seconds() / 60.0     # R6: + = factura despues del pago
             if cl == 'fuerte': nivel = 'FUERTE'
@@ -257,6 +277,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
         bi = cand[0]
         if abs(bk.at[bi, 'MONTO'] - fa.at[fi, 'Monto']) > 1e-9: rechazo(f"el movimiento tiene un monto distinto al de la factura (banco {bk.at[bi, 'MONTO']:.2f}, factura {fa.at[fi, 'Monto']:.2f})"); continue
         if bk.at[bi, 'FECHA / HORA'].date() not in fechas: rechazo('el movimiento es de una fecha distinta a la del cierre'); continue
+        if idt in rech.get(nf, ()): rechazo('usted descartó ese pago para esta factura'); continue
         if bk.at[bi, 'estado_banco'].startswith('ASIGNADO'): rechazo(f"ese movimiento del banco ya fue usado por la factura {bk.at[bi, 'factura_asignada']}"); continue
         poner(fi, bi, 'CONFIRMADA POR CAJERO', 'RESPALDO MANUAL' if nf in manuales else 'ELECCIÓN CAJERO')
     # facturas AMBIGUO restantes: candidatos que sigan libres
@@ -331,7 +352,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     facturas = fa[cols_f].rename(columns={'tipo': 'Tipo (motor)', 'Fecha': 'hora_factura'})
     banco = bk.drop(columns=['dup'])
     alert_df = pd.DataFrame(alertas, columns=['nivel', 'referencia', 'detalle'])
-    return {'facturas': facturas, 'banco': banco, 'resumen': resumen, 'alertas': alert_df, 'ci': ci_rows,
+    return {'facturas': facturas, 'banco': banco, 'resumen': resumen, 'alertas': alert_df, 'ci': ci_rows, 'descartes': descartes,
             'tarjetas': facturas[facturas['estado_conciliacion'] == 'TARJETA'].copy(), 'totales': tot}
 
 def exportar(res, ruta):

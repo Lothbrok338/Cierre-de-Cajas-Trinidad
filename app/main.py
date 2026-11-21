@@ -210,6 +210,8 @@ def create_app():
         f = res['facturas']; b = res['banco']; qr = f[f['Tipo (motor)'].isin(['QR', 'C.I.'])]
         ci = {r['factura']: r for r in res.get('ci', [])}
         af = servicio.alertas_formato(res, est); af_por_nf = {a['factura']: a for a in af}
+        desc_por_nf = {}
+        for d in res.get('descartes', []): desc_por_nf.setdefault(d['factura'], []).append(d)
         filas = []
         for _, r in qr.iterrows():
             nf = r['Número Factura']; e = r['estado_conciliacion']; nivel = r['nivel']
@@ -218,7 +220,8 @@ def create_app():
                           'estado': e, 'nivel': nivel, 'id': r['ID TRANSACCION'], 'titular': r['TITULAR ORIGEN'], 'hora_banco': r['hora_banco'],
                           'observada': obs, 'manual': nivel == 'RESPALDO MANUAL', 'ci': ci.get(nf), 'alerta_fmt': af_por_nf.get(str(nf)),
                           'deshacer': e == 'CONFIRMADA POR CAJERO' or e == 'COMUNICACIÓN INTERNA',
-                          'candidatos': servicio.candidatos(res, nf) if e in ('SIN RESPALDO', 'AMBIGUO') else []})
+                          'candidatos': servicio.candidatos(res, nf) if e in ('SIN RESPALDO', 'AMBIGUO') else [],
+                          'descartes': desc_por_nf.get(str(nf), [])})
         observadas = [x for x in filas if x['observada']]; conciliadas = [x for x in filas if not x['observada']]
         lista = servicio.conceptos(t)
         return dict(bid=bid, est=est, t=t, ev=ev, observadas=observadas, conciliadas=conciliadas, tab_inicial='observadas' if observadas else 'conciliadas',
@@ -242,7 +245,7 @@ def create_app():
 
     def estado_de(est, nf):
         return {'confirmada': nf in est['confirmaciones'], 'eleccion': est['elecciones'].get(nf), 'respaldo_manual': nf in est.get('respaldos_manuales', []),
-                'reclasificacion': (est.get('reclasificaciones') or {}).get(nf)}
+                'reclasificacion': (est.get('reclasificaciones') or {}).get(nf), 'rechazos': (est.get('rechazos') or {}).get(nf)}
 
     def accion(nombre, aplicar):
         def h(request: Request, bid: str, factura: str = Form(''), id_transaccion: str = Form(''), csrf: str = Form('')):
@@ -293,6 +296,29 @@ def create_app():
     app.post('/borrador/{bid}/confirmar')(accion('confirmar_coincidencia', _conf))
     app.post('/borrador/{bid}/deshacer')(accion('deshacer_confirmacion', _des))
     app.post('/borrador/{bid}/asignar')(accion('asignar_movimiento', _asig))
+
+    def _descarte(nombre, aplicar):
+        def h(request: Request, bid: str, factura: str = Form(''), csrf: str = Form('')):
+            u, est = cargar_borrador(request, bid); verificar_csrf(request, csrf)
+            if est.get('presentado'): raise StarletteHTTPException(404, 'Este borrador ya fue presentado.')
+            nf = factura.strip()
+            try: nuevo, info = aplicar(bid, est, nf)
+            except ErrorUsuario as e:
+                flash(request, str(e), 'error'); return RedirectResponse(f'/borrador/{bid}', 303)
+            alm.guardar_estado(bid, nuevo)
+            res = alm.conciliar(bid, nuevo)
+            alm.auditar(u['usuario'], nombre, {'borrador': bid, 'factura': nf, **info, 'estado_qr': res['totales']['Estado QR']})
+            if nombre == 'descartar_coincidencia':
+                flash(request, f"Descartó el pago {info['id_transaccion']} de {info['titular']} para la factura {nf}. Ahora puede elegir otro pago o reclasificarla.", 'ok')
+            else: flash(request, f"Se deshizo el descarte de la factura {nf}.", 'ok')
+            return RedirectResponse(f'/borrador/{bid}', 303)
+        return h
+
+    def _desc(bid, est, nf): return alm.descartar_coincidencia(bid, est, nf)
+    def _undesc(bid, est, nf):
+        nuevo, ids = alm.deshacer_descarte(bid, est, nf); return nuevo, {'ids_transaccion': ids}
+    app.post('/borrador/{bid}/descartar')(_descarte('descartar_coincidencia', _desc))
+    app.post('/borrador/{bid}/deshacer-descarte')(_descarte('deshacer_descarte', _undesc))
 
     @app.post('/borrador/{bid}/respaldo')
     def respaldo_manual(request: Request, bid: str, factura: str = Form(''), banco: str = Form(''), codigo: str = Form(''), csrf: str = Form('')):
@@ -410,7 +436,8 @@ def create_app():
                 t_m, n_m, tot_m = servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs)
                 extracto = {'n': n_m, 'total': tot_m, 'marcar': t_m,
                             'liberar': servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs, 'LIBERAR')[0] if u['rol'] == 'superadmin' else None}
-        return render(request, 'cierre.html', c=c, pdf_vigente=pdf_vigente(c), recien=q_presentado(request, cid) and u['usuario'] == c['usuario'],
+        notas_desc = (cj or {}).get('notas_descartes', []) if u['rol'] in ('ingresos', 'superadmin') else []
+        return render(request, 'cierre.html', notas_desc=notas_desc, c=c, pdf_vigente=pdf_vigente(c), recien=q_presentado(request, cid) and u['usuario'] == c['usuario'],
                       pendiente_hace=hace_dias(c['presentado_en']), archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc, extracto=extracto,
                       total=servicio.total_conceptos(conc) if cj else None, ci=(cj or {}).get('comunicaciones_internas', []),
                       alertas_c=alertas_c, n_alertas_pend=sum(1 for a in alertas_c if not a['revisada_en']),

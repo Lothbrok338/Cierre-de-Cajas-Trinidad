@@ -153,6 +153,10 @@
   <tbody>{% for r in ci %}<tr><td data-l="N° factura">{{ r.factura }}</td><td data-l="Cliente">{{ r.razon_social }}</td><td data-l="Monto (Bs)" class="num">{{ r.monto | bs }}</td><td data-l="Banco">{{ r.banco }}</td><td data-l="Código" class="mono">{{ r.codigo }}</td></tr>{% endfor %}</tbody>
 </table></div>
 {% endif %}
+{% if notas_desc %}
+<h2>Coincidencias descartadas por el cajero</h2>
+<ul class="alertas">{% for n in notas_desc %}<li>{{ n.texto }}</li>{% endfor %}</ul>
+{% endif %}
 {% if es_ingresos %}
 <h2>Historial de revisiones</h2>
 {% if historial %}

@@ -90,7 +90,7 @@ class Almacen:
         shutil.copyfile(ruta_a1_tmp, a1); shutil.copyfile(ruta_a2_tmp, a2)
         meta = motor.metadatos_a1(a1)
         est = {'usuario': usuario, 'tarjeta': tarjeta, 'confirmaciones': [], 'elecciones': {}, 'reclasificaciones': {},
-               'respaldos_manuales': [], 'origen': None, 'creado': db.ahora(),
+               'respaldos_manuales': [], 'rechazos': {}, 'origen': None, 'creado': db.ahora(),
                'archivo_movimiento': os.path.basename(a1), 'archivo_banco': 'banco_qr_original.xlsx',
                'nombres_subidos': nombres, 'caja': meta['caja'], 'presentado': None}
         self.guardar_estado(bid, est)
@@ -110,7 +110,8 @@ class Almacen:
         d = self.ruta_borrador(bid)
         return motor.conciliar(os.path.join(d, est['archivo_movimiento']), os.path.join(d, est['archivo_banco']),
                                est['tarjeta'], est['confirmaciones'], est['elecciones'],
-                               reclasificaciones=est.get('reclasificaciones') or None, respaldos_manuales=est.get('respaldos_manuales') or None)
+                               reclasificaciones=est.get('reclasificaciones') or None, respaldos_manuales=est.get('respaldos_manuales') or None,
+                               rechazos=est.get('rechazos') or None)
 
     def crear_borrador_desde(self, c, usuario):
         """Borrador para 'Editar y reenviar' a partir de un cierre RECHAZADO: copia archivos originales y decisiones.
@@ -128,7 +129,8 @@ class Almacen:
         shutil.copyfile(os.path.join(dc, 'banco_qr_original.xlsx'), os.path.join(d, 'banco_qr_original.xlsx'))
         est = {'usuario': usuario, 'tarjeta': cj['tarjeta_declarada_por_cajero'], 'confirmaciones': list(cj.get('confirmaciones') or []),
                'elecciones': dict(cj.get('elecciones') or {}), 'reclasificaciones': dict(cj.get('reclasificaciones') or {}),
-               'respaldos_manuales': list(cj.get('respaldos_manuales') or []), 'creado': db.ahora(),
+               'respaldos_manuales': list(cj.get('respaldos_manuales') or []),
+               'rechazos': {k: list(v) for k, v in (cj.get('rechazos') or {}).items()}, 'creado': db.ahora(),
                'origen': {'cierre_id': c['id'], 'correlativo': c['correlativo'], 'fecha_cierre': c['fecha_cierre'], 'observacion': c['observacion_revision']},
                'archivo_movimiento': f'movimiento_original.{ext}', 'archivo_banco': 'banco_qr_original.xlsx',
                'nombres_subidos': {'movimiento': mov, 'banco': 'banco_qr_original.xlsx'}, 'caja': cj.get('caja', ''), 'presentado': None}
@@ -187,6 +189,36 @@ class Almacen:
         nuevo['respaldos_manuales'] = [x for x in nuevo['respaldos_manuales'] if x != nf]
         nuevo['reclasificaciones'][nf] = {'banco': banco, 'codigo': cn}
         return nuevo, {'banco': banco, 'codigo': cn, 'resultado': 'COMUNICACIÓN INTERNA'}
+
+    # ---------------- descarte de coincidencias sugeridas ----------------
+    def descartar_coincidencia(self, bid, est, nf):
+        """El cajero dice que el pago sugerido (POR CONFIRMAR) no corresponde a la factura. Devuelve (est_nuevo, info).
+        Solo aplica a POR CONFIRMAR: una CONCILIADA automática o una ya CONFIRMADA (primero «Deshacer») no se descarta."""
+        nf = (nf or '').strip()
+        res = self.conciliar(bid, est); f = res['facturas'].set_index('Número Factura')
+        if nf not in f.index: raise ErrorUsuario('No se encontró la factura.')
+        e = f.loc[nf, 'estado_conciliacion']
+        if e == 'CONFIRMADA POR CAJERO':
+            raise ErrorUsuario(f'La factura {nf} ya fue confirmada: primero use «Deshacer» y luego «No corresponde».')
+        if e != 'POR CONFIRMAR':
+            raise ErrorUsuario(f'La factura {nf} no tiene una coincidencia dudosa para descartar (está {e}).')
+        idt = str(f.loc[nf, 'ID TRANSACCION']); titular = str(f.loc[nf, 'TITULAR ORIGEN'])
+        nuevo = json.loads(json.dumps(est)); nuevo.setdefault('rechazos', {})
+        lista = nuevo['rechazos'].setdefault(nf, [])
+        if idt not in lista: lista.append(idt)
+        nuevo['confirmaciones'] = [x for x in nuevo['confirmaciones'] if x != nf]
+        return nuevo, {'id_transaccion': idt, 'titular': titular}
+
+    def deshacer_descarte(self, bid, est, nf):
+        """Quita los descartes de la factura (vuelve la sugerencia original). Solo si sigue en Observadas. Devuelve (est_nuevo, ids)."""
+        nf = (nf or '').strip()
+        ids = list((est.get('rechazos') or {}).get(nf) or [])
+        if not ids: raise ErrorUsuario(f'La factura {nf} no tiene pagos descartados.')
+        res = self.conciliar(bid, est); f = res['facturas'].set_index('Número Factura')
+        if nf in f.index and f.loc[nf, 'estado_conciliacion'] not in OBSERVADAS:
+            raise ErrorUsuario(f'La factura {nf} ya tiene respaldo ({f.loc[nf, "estado_conciliacion"]}). Primero use «Deshacer» y luego «Deshacer descarte».')
+        nuevo = json.loads(json.dumps(est)); nuevo['rechazos'].pop(nf, None)
+        return nuevo, ids
 
     # ---------------- consultas ----------------
     def vigente(self, fecha_cierre, usuario):
@@ -336,11 +368,13 @@ class Almacen:
             info = {'correlativo': corr, 'fecha_cierre': fc, 'caja': est.get('caja', ''), 'usuario': usuario, 'nombre': nombre,
                     'presentado_en': presentado_en, 'version': version, 'sha256_movimiento': h_mov, 'sha256_banco': h_ban,
                     'estado_revision': ESTADO_INICIAL, 'reemplaza_a': prev['correlativo'] if prev else None,
-                    'motivo_reemplazo': (motivo_reemplazo or '').strip() or None, 'alertas_formato': alertas}
+                    'motivo_reemplazo': (motivo_reemplazo or '').strip() or None, 'alertas_formato': alertas,
+                    'notas_descartes': notas_descartes(res)}
             pdf.generar(res, info, os.path.join(destino, 'cierre.pdf'))
             cj = {**info, 'archivo_movimiento': mov, 'estado_revision': ESTADO_INICIAL, 'reemplaza_a': prev['correlativo'] if prev else None,
                   'motivo_reemplazo': (motivo_reemplazo or '').strip() or None, 'estado_qr': t['Estado QR'],
                   'conceptos': conceptos(t), 'totales': t, 'confirmaciones': est['confirmaciones'], 'elecciones': est['elecciones'],
+                  'rechazos': est.get('rechazos') or {},
                   'reclasificaciones': est.get('reclasificaciones') or {}, 'respaldos_manuales': est.get('respaldos_manuales') or [],
                   'comunicaciones_internas': res.get('ci', []), 'alertas_formato': alertas,
                   'tarjeta_declarada_por_cajero': est['tarjeta'], 'declaracion': 'El cajero declara conforme el presente cierre.',
@@ -571,10 +605,10 @@ class Almacen:
         with open(os.path.join(d, 'cierre.json'), encoding='utf-8') as f: cj = json.load(f)
         res = motor.conciliar(os.path.join(d, cj['archivo_movimiento']), os.path.join(d, 'banco_qr_original.xlsx'), cj['tarjeta_declarada_por_cajero'],
                               cj['confirmaciones'], cj['elecciones'], reclasificaciones=cj.get('reclasificaciones') or None,
-                              respaldos_manuales=cj.get('respaldos_manuales') or None)
+                              respaldos_manuales=cj.get('respaldos_manuales') or None, rechazos=cj.get('rechazos') or None)
         info = {k: cj.get(k) for k in ('correlativo', 'fecha_cierre', 'caja', 'usuario', 'nombre', 'presentado_en', 'version',
                                        'sha256_movimiento', 'sha256_banco', 'motivo_reemplazo')}
-        info['alertas_formato'] = cj.get('alertas_formato') or []
+        info['alertas_formato'] = cj.get('alertas_formato') or []; info['notas_descartes'] = cj.get('notas_descartes') or []
         u_rev = self.usuario_get(c['revisado_por']) if c['revisado_por'] else None   # nombre completo solo para mostrar; revisado_por sigue siendo el login
         info['revisado_por_nombre'] = u_rev['nombre'] if u_rev is not None and u_rev['nombre'] else c['revisado_por']
         info.update(estado_revision=c['estado_revision'], revisado_por=c['revisado_por'], revisado_en=c['revisado_en'],
@@ -703,5 +737,22 @@ def candidatos(res, nf):
     f = res['facturas'].set_index('Número Factura')
     if nf not in f.index: return []
     m = f.loc[nf, 'Monto']; b = res['banco']
+    desc = {d['id'] for d in res.get('descartes', []) if d['factura'] == nf}
     c = b[(abs(b['MONTO'] - m) < 1e-9) & (b['estado_banco'].str.startswith('AJENO') | b['estado_banco'].str.startswith('AMBIGUO'))]
-    return [{'id': r['ID TRANSACCION'], 'titular': r['TITULAR ORIGEN'], 'hora': r['FECHA / HORA']} for _, r in c.iterrows()]
+    return [{'id': r['ID TRANSACCION'], 'titular': r['TITULAR ORIGEN'], 'hora': r['FECHA / HORA'], 'descartado': r['ID TRANSACCION'] in desc}
+            for _, r in c.iterrows()]
+
+
+def notas_descartes(res):
+    """Una nota por cada pago descartado por el cajero, segun como quedo la factura. Lista de dicts {factura, id, titular, texto}."""
+    f = res['facturas'].set_index('Número Factura'); ci = {r['factura']: r for r in res.get('ci', [])}; out = []
+    for d in res.get('descartes', []):
+        nf = d['factura']; base = f"El cajero descartó la coincidencia sugerida ({d['id']}, titular «{d['titular']}») de la factura {nf}"
+        if nf in ci: fin = f" y la reclasificó como comunicación interna ({ci[nf]['banco']} {ci[nf]['codigo']})."
+        elif nf in f.index and f.loc[nf, 'estado_conciliacion'] == 'CONFIRMADA POR CAJERO':
+            r = f.loc[nf]
+            fin = (f" y asignó el pago {r['ID TRANSACCION']} (titular «{r['TITULAR ORIGEN']}»)"
+                   + (' como respaldo manual.' if r['nivel'] == 'RESPALDO MANUAL' else ('.' if r['nivel'] == 'ELECCIÓN CAJERO' else ' tras revisar otra coincidencia.')))
+        else: fin = '; la factura no tiene respaldo asignado.'
+        out.append({'factura': nf, 'id': d['id'], 'titular': d['titular'], 'texto': base + fin})
+    return out
