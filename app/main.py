@@ -327,16 +327,30 @@ def create_app():
         except ErrorUsuario as e:
             alm.auditar(u['usuario'], 'presentar_bloqueado', {'borrador': bid, 'motivo': str(e)})
             flash(request, str(e), 'error'); return RedirectResponse(f'/borrador/{bid}', 303)
-        flash(request, f'Cierre {corr} presentado correctamente.', 'ok')
+        request.session['presentado'] = cid
         return RedirectResponse(f'/cierres/{cid}', 303)
 
     # ---------------- detalle de cierre ----------------
+    def pdf_vigente(c):
+        """Nombre del PDF vigente: cierre_revision.pdf si existe (lleva el estado de revision), si no cierre.pdf."""
+        d = os.path.join(alm.dir, c['ruta'])
+        return 'cierre_revision.pdf' if os.path.isfile(os.path.join(d, 'cierre_revision.pdf')) else 'cierre.pdf'
+
+    def hace_dias(presentado_en):
+        try: n = (datetime.now().date() - datetime.fromisoformat(str(presentado_en)).date()).days
+        except ValueError: return ''
+        n = max(n, 0)
+        return 'hoy' if n == 0 else ('hace 1 día' if n == 1 else f'hace {n} días')
+    T.env.filters['hace_dias'] = hace_dias
+
     def cargar_cierre(request, cid):
         u = usuario(request); c = alm.cierre(cid)
         if c is None or (u['rol'] not in ('ingresos', 'superadmin') and c['usuario'] != u['usuario']):
             if c is not None: alm.auditar(u['usuario'], 'acceso_denegado', {'cierre': cid})
             raise StarletteHTTPException(404, 'No se encontró el cierre.')
         return u, c
+
+    def q_presentado(request, cid): return request.session.pop('presentado', None) == cid
 
     @app.get('/cierres/{cid}', response_class=HTMLResponse)
     def detalle(request: Request, cid: int):
@@ -363,7 +377,8 @@ def create_app():
                 t_m, n_m, tot_m = servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs)
                 extracto = {'n': n_m, 'total': tot_m, 'marcar': t_m,
                             'liberar': servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs, 'LIBERAR')[0] if u['rol'] == 'superadmin' else None}
-        return render(request, 'cierre.html', c=c, archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc, extracto=extracto,
+        return render(request, 'cierre.html', c=c, pdf_vigente=pdf_vigente(c), recien=q_presentado(request, cid) and u['usuario'] == c['usuario'],
+                      pendiente_hace=hace_dias(c['presentado_en']), archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc, extracto=extracto,
                       total=servicio.total_conceptos(conc) if cj else None, ci=(cj or {}).get('comunicaciones_internas', []),
                       alertas_c=alertas_c, n_alertas_pend=sum(1 for a in alertas_c if not a['revisada_en']),
                       es_ingresos=u['rol'] in ('ingresos', 'superadmin'), es_super=u['rol'] == 'superadmin',
@@ -423,6 +438,11 @@ def create_app():
         alm.auditar(u['usuario'], 'editar_reenviar_iniciado', {'cierre': c['correlativo'], 'borrador': bid})
         return RedirectResponse(f'/borrador/{bid}', 303)
 
+    @app.get('/cierres/{cid}/comprobante')
+    def comprobante(request: Request, cid: int):
+        u, c = cargar_cierre(request, cid)
+        return RedirectResponse(f'/cierres/{cid}/archivo/{pdf_vigente(c)}', 303)
+
     @app.get('/cierres/{cid}/archivo/{nombre}')
     def descargar(request: Request, cid: int, nombre: str):
         u, c = cargar_cierre(request, cid)
@@ -432,7 +452,7 @@ def create_app():
         alm.auditar(u['usuario'], 'descarga', {'cierre': c['correlativo'], 'archivo': nombre})
         mt = servicio.ARCHIVOS_CIERRE.get(nombre, 'application/vnd.ms-excel' if nombre.endswith('.xls') else servicio.ARCHIVOS_CIERRE['conciliacion.xlsx'])
         return FileResponse(ruta, media_type=mt, filename=f"{c['correlativo']}_{nombre}",
-                            content_disposition_type='inline' if nombre in ('cierre.pdf', 'cierre_revision.pdf') else 'attachment')
+                            content_disposition_type='inline' if nombre in ('cierre.pdf', 'cierre_revision.pdf') and request.query_params.get('descargar') != '1' else 'attachment')
 
     # ---------------- mi cuenta ----------------
     @app.get('/cuenta', response_class=HTMLResponse)

@@ -235,7 +235,7 @@ def test_ci_presentado_totales_y_pdf(app, sint):
     assert 'Comunicaciones internas' in html and 'DEP-12345' in html and 'PREVALIDADO POR INGRESOS' in html
     pypdf = pytest.importorskip('pypdf')
     txt = ' '.join(p.extract_text() for p in pypdf.PdfReader(os.path.join(dest, 'cierre.pdf')).pages).replace('\n', ' ')
-    assert 'Comunicaciones internas' in txt and 'PREVALIDADO POR INGRESOS' in txt and 'DEP-12345' in txt and 'Cierre Diario de Caja' in txt
+    assert 'Comunicaciones internas' in txt and 'PREVALIDADO POR INGRESOS' in txt and 'DEP-12345' in txt and 'Comprobante de cierre de caja' in txt
     assert 'PENDIENTE DE REVISIÓN' in txt
 
 

@@ -6,22 +6,38 @@
   <span class="insignia {{ c.estado_revision | clase_estado }}">{{ c.estado_revision }}</span>
 </div>
 
+{% if recien %}
+<section class="exito" role="status" aria-label="Cierre presentado">
+  <h2>✓ Cierre presentado — {{ c.correlativo }}</h2>
+  <p>Guarde o imprima este comprobante como respaldo. Ingresos revisará su cierre; esto puede tomar algunos días.</p>
+</section>
+{% endif %}
+<section class="tarjeta comprobante" aria-label="Comprobante">
+  <h2>Comprobante</h2>
+  <p class="estado-linea"><span class="insignia {{ c.estado_revision | clase_estado }}">{{ c.estado_revision }}</span>
+    {% if c.estado_revision == 'PENDIENTE DE REVISIÓN' %}Esperando revisión de Ingresos — presentado {{ pendiente_hace }}.
+    {% elif c.estado_revision == 'CONFORME' %}Aprobado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}.
+    {% elif c.estado_revision == 'RECHAZADO' %}Rechazado por Ingresos: {{ c.observacion_revision }}
+    {% elif c.estado_revision == 'REEMPLAZADO' %}Reemplazado por la versión v{{ c.version + 1 }}{% if posterior %}: <a href="/cierres/{{ posterior.id }}">{{ posterior.correlativo }}</a>{% endif %}.{% endif %}</p>
+  <div class="botones-izq">
+    <a class="btn btn-prim btn-grande" href="/cierres/{{ c.id }}/archivo/{{ pdf_vigente }}" target="_blank" rel="noopener">Ver e imprimir comprobante (PDF)</a>
+    <a class="btn btn-sec btn-grande" href="/cierres/{{ c.id }}/archivo/{{ pdf_vigente }}?descargar=1">Descargar PDF</a>
+    {% if c.estado_revision == 'RECHAZADO' and es_dueno %}<form method="post" action="/cierres/{{ c.id }}/editar" class="en-linea"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-prim btn-grande" type="submit">Editar y reenviar</button></form>{% endif %}
+  </div>
+</section>
+
 {% if c.estado_revision == 'RECHAZADO' %}
 <section class="rechazo" aria-label="Cierre rechazado">
   <h2>Rechazado por Ingresos</h2>
   <p class="obs-texto">{{ c.observacion_revision }}</p>
   <p class="ayuda">Revisado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}.</p>
-  {% if es_dueno %}
-  <form method="post" action="/cierres/{{ c.id }}/editar"><input type="hidden" name="csrf" value="{{ csrf }}">
-    <button class="btn btn-prim" type="submit">Editar y reenviar</button></form>
-  {% endif %}
 </section>
 {% elif c.estado_revision == 'CONFORME' %}
 <div class="aviso aviso-ok">Cierre CONFORME: revisado por {{ c.revisado_por }} el {{ c.revisado_en | fecha_hora }}. Ya no puede modificarse.{% if c.observacion_revision %} Observación: {{ c.observacion_revision }}{% endif %}</div>
 {% elif c.estado_revision == 'REEMPLAZADO' %}
 <div class="aviso aviso-info">Este cierre fue reemplazado{% if posterior %} por <a href="/cierres/{{ posterior.id }}">{{ posterior.correlativo }}</a>{% endif %}. Se conserva solo como respaldo.</div>
 {% elif es_dueno %}
-<div class="aviso aviso-info">Pendiente de revisión por Ingresos. Mientras esté pendiente no puede modificarse.</div>
+<div class="aviso aviso-info">Mientras esté pendiente de revisión, el cierre no puede modificarse.</div>
 {% endif %}
 
 {% if alertas_c %}
@@ -150,10 +166,11 @@
 </table></div>
 {% else %}<p class="ayuda">Todavía no hay revisiones registradas para este cierre.</p>{% endif %}
 {% endif %}
-<h2>Archivos</h2>
-<ul class="archivos">
+{% set lista_archivos %}<ul class="archivos">
   {% for a in archivos %}<li><a href="/cierres/{{ c.id }}/archivo/{{ a }}">{{ a }}</a>{% if a == 'cierre.pdf' %} <small>(tal como se presentó)</small>{% elif a == 'cierre_revision.pdf' %} <small>(con el estado de revisión)</small>{% endif %}</li>{% endfor %}
-</ul>
+</ul>{% endset %}
+{% if es_ingresos %}<h2>Archivos</h2>{{ lista_archivos }}
+{% else %}<details class="respaldo-tec"><summary>Archivos de respaldo (avanzado)</summary>{{ lista_archivos }}</details>{% endif %}
 <h2>Huellas de los archivos originales (SHA-256)</h2>
 <p class="mono">Movimiento: {{ c.sha256_movimiento }}<br>Banco QR BANECO: {{ c.sha256_banco }}</p>
 <p><a class="btn btn-sec" href="/">Volver</a></p>

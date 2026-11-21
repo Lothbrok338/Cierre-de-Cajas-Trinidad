@@ -28,10 +28,12 @@
     {% if todos %}<td data-l="Cajero">{{ c.nombre }}</td>{% endif %}
     <td data-l="Total (Bs)" class="num">{{ c.total_cierre | bs }}</td>
     <td data-l="Estado"><span class="insignia {{ c.estado_revision | clase_estado }}">{{ c.estado_revision }}</span>
+      {% if c.estado_revision == 'PENDIENTE DE REVISIÓN' %}<br><small class="hace">{{ c.presentado_en | hace_dias }}</small>{% endif %}
       {% if todos and c.n_alertas %}<br>{% if c.n_alertas_pend %}<span class="insignia ins-alerta" title="Códigos con formato a revisar">⚠ {{ c.n_alertas_pend }} {{ 'alerta' if c.n_alertas_pend == 1 else 'alertas' }}</span>{% else %}<span class="insignia ins-gris" title="Todas las alertas fueron revisadas">✓ {{ c.n_alertas }} {{ 'revisada' if c.n_alertas == 1 else 'revisadas' }}</span>{% endif %}{% endif %}
       {% if c.estado_revision == 'RECHAZADO' and not todos %}<br><small class="obs-mini">Observación de Ingresos: {{ c.observacion_revision }}</small>{% endif %}</td>
     <td data-l="Presentado el">{{ c.presentado_en | fecha_hora }}</td>
-    <td><a class="btn btn-sec btn-sm" href="/cierres/{{ c.id }}">{{ 'Ver y corregir' if c.estado_revision == 'RECHAZADO' and not todos else ('Revisar' if c.estado_revision == 'PENDIENTE DE REVISIÓN' and todos else 'Ver detalle') }}</a></td>
+    <td class="acc-fila"><a class="btn btn-sec btn-sm" href="/cierres/{{ c.id }}/comprobante" target="_blank" rel="noopener" title="Abrir el comprobante PDF en otra pestaña">PDF</a>
+      <a class="btn btn-sec btn-sm" href="/cierres/{{ c.id }}">{{ 'Ver y corregir' if c.estado_revision == 'RECHAZADO' and not todos else ('Revisar' if c.estado_revision == 'PENDIENTE DE REVISIÓN' and todos else 'Ver detalle') }}</a></td>
   </tr>
   {% endfor %}
   </tbody>

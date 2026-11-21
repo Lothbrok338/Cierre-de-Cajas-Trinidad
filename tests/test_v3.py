@@ -119,7 +119,7 @@ def test_revertir_conforme_a_pendiente_con_motivo(app, sint):
     # historial visible para ingresos y superadmin; el cajero no lo ve
     assert 'Historial de revisiones' in ing.get(f'/cierres/{cid}').text and 'Revirtió la revisión' in sup.get(f'/cierres/{cid}').text
     assert 'Historial de revisiones' not in ana.get(f'/cierres/{cid}').text
-    assert 'Pendiente de revisión por Ingresos' in ana.get(f'/cierres/{cid}').text
+    assert 'Esperando revisión de Ingresos' in ana.get(f'/cierres/{cid}').text
     # y vuelve a poder revisarse
     assert revisar(ing, cid, 'rechazar', 'Ahora sí: observación completa').status_code == 303 and estado(app, cid)[0] == 'RECHAZADO'
 

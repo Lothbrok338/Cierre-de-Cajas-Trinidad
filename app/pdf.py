@@ -55,17 +55,19 @@ def _col_estado(e):
 def generar(res, info, ruta):
     from .servicio import conceptos, total_conceptos
     t = res['totales']; f = res['facturas']; b = res['banco']
-    doc = SimpleDocTemplate(ruta, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=14 * mm, bottomMargin=14 * mm,
-                            title=f"Cierre {info['correlativo']}", author='UNIVALLE')
+    doc = SimpleDocTemplate(ruta, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=14 * mm, bottomMargin=20 * mm,
+                            title=f"Comprobante de cierre de caja {info['correlativo']}", author='UNIVALLE')
     S = []
     alertas = info.get('alertas_formato') or []
     marcadas = {(a['factura'], a['banco']) for a in alertas}
     if os.path.isfile(LOGO):
         S.append(Image(LOGO, width=52 * mm, height=52 * mm * 134 / 526, hAlign='LEFT')); S.append(Spacer(1, 3))
-        cab = Table([[_p('Cierre Diario de Caja', H1)]], colWidths=[178 * mm])
-        cab.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), 1.5, AZUL), ('LEFTPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 3)]))
-        S.append(cab)
-    else: S.append(_p('UNIVALLE — Cierre Diario de Caja', H1))
+    else: S.append(_p('UNIVALLE', H1))
+    estado = info.get('estado_revision') or 'PENDIENTE DE REVISIÓN'
+    cab = Table([[_p('Comprobante de cierre de caja', H1), _p(estado, ParagraphStyle('ins', parent=CB, fontSize=8.5, leading=10.5, alignment=1))]], colWidths=[118 * mm, 60 * mm])
+    cab.setStyle(TableStyle([('LINEBELOW', (0, 0), (-1, -1), 1.5, AZUL), ('LEFTPADDING', (0, 0), (0, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('BACKGROUND', (1, 0), (1, 0), _col_estado(estado)), ('BOX', (1, 0), (1, 0), 0.5, LINEA)]))
+    S.append(cab)
     S.append(Spacer(1, 3))
     S.append(_p(f"Correlativo {info['correlativo']}", ParagraphStyle('c2', parent=N, fontName='Helvetica-Bold', fontSize=11, textColor=AZUL)))
     S.append(Spacer(1, 4))
@@ -174,7 +176,18 @@ def generar(res, info, ruta):
         x.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO)])); S.append(x)
 
     def pie(canvas, d):
-        canvas.saveState(); canvas.setFont('Helvetica', 7); canvas.setFillColor(GRIS)
+        canvas.saveState(); canvas.setFillColor(GRIS)
+        est_r = info.get('estado_revision') or 'PENDIENTE DE REVISIÓN'
+        if est_r == 'CONFORME' and info.get('revisado_por'):
+            txt = f"Revisado y conforme por {info['revisado_por']} el {fecha_hora(info['revisado_en'])}."
+        elif est_r == 'RECHAZADO':
+            txt = f"Rechazado por Ingresos: {info.get('observacion_revision') or '-'}"
+        else:
+            txt = 'Comprobante del cajero. Declaración del cajero; no constituye aprobación hasta la revisión de Ingresos.'
+        pf = _p(txt, ParagraphStyle('pie', parent=N, fontSize=7.5, leading=9, textColor=GRIS))
+        w, h = pf.wrap(A4[0] - 32 * mm, 12 * mm); pf.drawOn(canvas, 16 * mm, 12 * mm)
+        canvas.setStrokeColor(LINEA); canvas.line(16 * mm, 12 * mm + h + 1.5 * mm, A4[0] - 16 * mm, 12 * mm + h + 1.5 * mm)
+        canvas.setFont('Helvetica', 7)
         canvas.drawString(16 * mm, 8 * mm, f"{info['correlativo']} · v{info['version']} · generado {fecha_hora(info['presentado_en'])}")
         canvas.drawRightString(A4[0] - 16 * mm, 8 * mm, f"Página {d.page}"); canvas.restoreState()
     doc.build(S, onFirstPage=pie, onLaterPages=pie)
