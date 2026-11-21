@@ -79,8 +79,9 @@ MIGRACIONES = [
     ('cierres', 'revisado_por', 'TEXT'),
     ('cierres', 'revisado_en', 'TEXT'),
     ('cierres', 'observacion_revision', 'TEXT'),
+    ('cierres', 'sha256_plantilla', 'TEXT'),   # v5: huella de la plantilla de comunicaciones internas (NULL si no se cargo)
 ]
-VERSION_ESQUEMA = 4   # v4: tabla alertas_cierre (alertas de formato del codigo de asignacion)
+VERSION_ESQUEMA = 5   # v4: tabla alertas_cierre (alertas de formato); v5: cierres.sha256_plantilla
 
 
 def migrar(con):

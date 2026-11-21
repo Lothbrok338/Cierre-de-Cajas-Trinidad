@@ -8,3 +8,4 @@ __pycache__/
 *.xlsx
 *.xlsm
 node_modules/
+!app/static/plantilla_comunicaciones_internas.xlsx

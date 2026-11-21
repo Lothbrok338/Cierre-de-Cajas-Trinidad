@@ -15,7 +15,12 @@
     <input id="banco" name="banco" type="file" accept=".xlsx" required>
   </div>
   <div class="campo">
-    <label for="tarjeta">3. Total cobrado con tarjetas <small>(Bs; escriba 0 si no hubo)</small></label>
+    <label for="plantilla">3. Detalle de depósitos a otros bancos <small>(plantilla .xlsx; opcional)</small></label>
+    <input id="plantilla" name="plantilla" type="file" accept=".xlsx">
+    <p class="ayuda">Si hoy hubo facturas pagadas con depósitos a otros bancos (BNB, BMSC, BISA, UNION), suba aquí la plantilla que fue llenando durante el día: el sistema las reclasifica solas como comunicaciones internas. Si no hubo, deje este campo vacío. <a href="/plantilla-comunicaciones-internas">Descargar plantilla</a></p>
+  </div>
+  <div class="campo">
+    <label for="tarjeta">4. Total cobrado con tarjetas <small>(Bs; escriba 0 si no hubo)</small></label>
     <input id="tarjeta" name="tarjeta" type="text" inputmode="decimal" placeholder="Ejemplo: 1191.00" value="{{ tarjeta or '' }}" required>
   </div>
   <p class="ayuda">Tamaño máximo por archivo: {{ max_mb }} MB.</p>

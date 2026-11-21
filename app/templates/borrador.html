@@ -18,7 +18,7 @@
   <h1>Revisión del cierre del {{ t.fecha_cierre | fecha }}</h1>
   {% if not origen %}<a class="btn btn-sec" href="/nuevo">Volver a cargar archivos</a>{% endif %}
 </div>
-<p class="ayuda">Caja {{ est.caja or '-' }} · Archivos: {{ est.nombres_subidos.movimiento | nombre_archivo }} y {{ est.nombres_subidos.banco | nombre_archivo }}</p>
+<p class="ayuda">Caja {{ est.caja or '-' }} · Archivos: {{ est.nombres_subidos.movimiento | nombre_archivo }}{% if pl %}, {{ est.nombres_subidos.banco | nombre_archivo }} y plantilla {{ pl.nombre | nombre_archivo }}{% else %} y {{ est.nombres_subidos.banco | nombre_archivo }}{% endif %}</p>
 
 {% if origen %}
 <section class="rechazo" aria-label="Corrección de un cierre rechazado">
@@ -32,6 +32,8 @@
       <input id="nuevo-movimiento" name="movimiento" type="file" accept=".xls,.xlsx">
       <label for="nuevo-banco">Reporte QR BANECO <small>(.xlsx; deje vacío para conservar el actual)</small></label>
       <input id="nuevo-banco" name="banco" type="file" accept=".xlsx">
+      <label for="nuevo-plantilla">Plantilla de comunicaciones internas <small>(.xlsx; deje vacío para conservar la actual)</small></label>
+      <input id="nuevo-plantilla" name="plantilla" type="file" accept=".xlsx">
       <p class="ayuda">La fecha debe seguir siendo la del cierre rechazado. Las decisiones ya tomadas se conservan si siguen siendo válidas.</p>
       <button class="btn btn-prim btn-sm" type="submit" data-espera="Reemplazando…">Reemplazar archivos</button>
     </form>
@@ -58,6 +60,42 @@
     <tbody>{% for a in alertas_fmt %}<tr><td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Regla esperada">{{ a.detalle }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
+{% endif %}
+
+{% if pl %}
+<section class="plantilla-resumen tarjeta" aria-label="Plantilla de comunicaciones internas">
+  <h2>Plantilla de comunicaciones internas</h2>
+  <p class="resumen-pl"><strong>Plantilla:</strong> {{ pl.leidas }} {{ 'fila leída' if pl.leidas == 1 else 'filas leídas' }} · {{ pl.aplicadas }} {{ 'aplicada' if pl.aplicadas == 1 else 'aplicadas' }} · {{ pl.problemas_vivos | length }} con {{ 'problema' if pl.problemas_vivos | length == 1 else 'problemas' }}{% if pl.descartadas_vivas %} · {{ pl.descartadas_vivas }} {{ 'deshecha' if pl.descartadas_vivas == 1 else 'deshechas' }} por usted{% endif %}{% if pl.resueltos %} · {{ pl.resueltos }} {{ 'resuelta' if pl.resueltos == 1 else 'resueltas' }} a mano{% endif %}</p>
+  {% if pl.problemas_vivos %}
+  <div class="alertas-rev" role="alert" aria-label="Filas de la plantilla con problemas">
+    <h3>⚠ Filas de la plantilla con problemas ({{ pl.problemas_vivos | length }})</h3>
+    <p>Estas filas <strong>no se aplicaron</strong>. Corrija el Excel y súbalo de nuevo con «Reemplazar plantilla», o resuelva esas facturas a mano en la pestaña Observadas. El resto del cierre sigue funcionando.</p>
+    <div class="tabla-wrap"><table class="tabla">
+      <thead><tr><th>Fila</th><th>N° factura</th><th>Motivo</th></tr></thead>
+      <tbody>{% for p in pl.problemas_vivos %}<tr><td data-l="Fila">{{ p.fila }}</td><td data-l="N° factura">{{ p.factura or '—' }}</td><td data-l="Motivo">{{ p.motivo }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </div>
+  {% endif %}
+  <details class="desplegable"><summary>Reemplazar plantilla</summary>
+    <form method="post" action="/borrador/{{ bid }}/plantilla" enctype="multipart/form-data" class="form-archivos">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label for="reemplazo-plantilla">Plantilla corregida <small>(.xlsx)</small></label>
+      <input id="reemplazo-plantilla" name="plantilla" type="file" accept=".xlsx" required>
+      <p class="ayuda">Se vuelve a leer completa: las comunicaciones internas que vinieron de la plantilla anterior se rehacen con la nueva. Lo que usted registró a mano se conserva.</p>
+      <button class="btn btn-prim btn-sm" type="submit" data-espera="Reemplazando…">Reemplazar plantilla</button>
+    </form>
+  </details>
+</section>
+{% else %}
+<details class="seccion"><summary>Subir plantilla de comunicaciones internas <small>(opcional)</small></summary>
+  <form method="post" action="/borrador/{{ bid }}/plantilla" enctype="multipart/form-data" class="form-archivos">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="subir-plantilla">Detalle de depósitos a otros bancos <small>(plantilla .xlsx)</small></label>
+    <input id="subir-plantilla" name="plantilla" type="file" accept=".xlsx" required>
+    <p class="ayuda"><a href="/plantilla-comunicaciones-internas">Descargar plantilla</a>. Las facturas listadas se reclasifican como comunicaciones internas.</p>
+    <button class="btn btn-prim btn-sm" type="submit" data-espera="Subiendo…">Subir plantilla</button>
+  </form>
+</details>
 {% endif %}
 
 <section class="kpis">
@@ -96,7 +134,7 @@
         {{ celdas_base(f) }}
         <td data-l="Estado">
           {% if f.estado == 'CONCILIADA' %}<span class="insignia ins-verde">CONCILIADA</span>
-          {% elif f.estado == 'COMUNICACIÓN INTERNA' %}<span class="insignia ins-guinda">Comunicación interna — {{ f.ci.banco }} {{ f.ci.codigo }}</span>
+          {% elif f.estado == 'COMUNICACIÓN INTERNA' %}<span class="insignia ins-guinda">Comunicación interna — {{ f.ci.banco }} {{ f.ci.codigo }}</span>{% if f.desde_plantilla %} <small class="desde-pl">(desde plantilla)</small>{% endif %}
           {% elif f.manual %}<span class="insignia ins-guinda">Respaldo manual</span>
           {% else %}<span class="insignia ins-guinda">Confirmada por cajero</span>{% endif %}
           {% if f.alerta_fmt %}<span class="alerta-fmt">⚠ <strong>FORMATO A REVISAR</strong>: {{ f.alerta_fmt.detalle }}</span>{% endif %}

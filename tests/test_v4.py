@@ -198,7 +198,7 @@ def test_migracion_v3_a_v4_con_filas(tmp_path, monkeypatch):
     from app.main import create_app
     for _ in range(2):      # idempotente
         app = create_app(); con = sqlite3.connect(ruta)
-        assert con.execute('PRAGMA user_version').fetchone()[0] == 4
+        assert con.execute('PRAGMA user_version').fetchone()[0] == 5
         cols = [r[1] for r in con.execute('PRAGMA table_info(alertas_cierre)')]
         assert cols[:8] == ['id', 'cierre_id', 'tipo', 'factura', 'banco', 'codigo', 'detalle', 'creado_en'] and 'revisada_por' in cols and 'revisada_en' in cols
         assert con.execute('select correlativo, estado_revision from cierres').fetchall() == [('CC-2026-00001', 'CONFORME')]

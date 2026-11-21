@@ -124,6 +124,8 @@ def generar(res, info, ruta):
     S.append(_p('Huellas de los archivos originales (SHA-256, abreviadas)', CB))
     S.append(_p(f"Movimiento del cajero: {info['sha256_movimiento'][:16]}…{info['sha256_movimiento'][-8:]}", C))
     S.append(_p(f"Reporte QR BANECO del banco: {info['sha256_banco'][:16]}…{info['sha256_banco'][-8:]}", C))
+    if info.get('sha256_plantilla'):
+        S.append(_p(f"Plantilla de comunicaciones internas: {info['sha256_plantilla'][:16]}…{info['sha256_plantilla'][-8:]}", C))
     S.append(Spacer(1, 6))
     S.append(_p('Las tarjetas se declaran por el cajero y quedan pendientes de verificación por Ingresos.', NOTA))
 
@@ -158,6 +160,8 @@ def generar(res, info, ruta):
                                 _pa(r['codigo'], C) if (str(r['factura']), r['banco']) in marcadas else _p(r['codigo'], C)])
         x = Table(fi, colWidths=[22 * mm, 66 * mm, 24 * mm, 22 * mm, 40 * mm], repeatRows=1)
         x.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO)])); S.append(x)
+        desde = [str(r['factura']) for r in res['ci'] if str(r['factura']) in set(map(str, info.get('plantilla_origen') or []))]
+        if desde: S.append(_p('Cargadas desde la plantilla de comunicaciones internas: facturas ' + ', '.join(desde) + '.', NOTA))
     if alertas:
         S.append(_p('Alertas de revisión: formato del código de asignación', H2))
         S.append(_p('Estos códigos se registraron igual, pero no cumplen el formato esperado del banco; Ingresos debe revisarlos.', NOTA))

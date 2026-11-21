@@ -2,7 +2,7 @@
 import hashlib, json, os, re, shutil, sqlite3, uuid
 from datetime import datetime
 
-from . import auth, catalogo, db, motor
+from . import auth, catalogo, db, motor, plantilla
 from .formato import fecha
 
 MAX_BYTES = 10 * 1024 * 1024
@@ -23,7 +23,9 @@ ARCHIVOS_CIERRE = {  # nombre logico -> tipo mime
     'conciliacion.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'cierre.pdf': 'application/pdf', 'cierre.json': 'application/json',
     'banco_qr_original.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'comunicaciones_internas_original.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 }
+ARCH_PLANTILLA = 'comunicaciones_internas_original.xlsx'
 
 
 class ErrorUsuario(Exception):
@@ -67,6 +69,13 @@ def validar_a2(path):
         raise ErrorUsuario(MSG_A2)
 
 
+def validar_plantilla(path):
+    """Valida que el archivo sea una plantilla legible (.xlsx con los encabezados). Devuelve las filas leidas. Lanza ErrorUsuario si no."""
+    if _tipo_real(path) != 'xlsx': raise ErrorUsuario('Plantilla de comunicaciones internas: el archivo debe ser un .xlsx válido. Descargue la plantilla desde «Nuevo cierre».')
+    try: return plantilla.leer(path)
+    except ValueError as e: raise ErrorUsuario(str(e))
+
+
 class Almacen:
     def __init__(self, data_dir):
         self.dir = os.path.abspath(data_dir)
@@ -84,15 +93,17 @@ class Almacen:
         except ValueError: return None
         return os.path.join(self.dir, 'borradores', bid)
 
-    def crear_borrador(self, usuario, ruta_a1_tmp, ext_a1, ruta_a2_tmp, tarjeta, nombres):
+    def crear_borrador(self, usuario, ruta_a1_tmp, ext_a1, ruta_a2_tmp, tarjeta, nombres, ruta_plantilla_tmp=None):
         bid = str(uuid.uuid4()); d = self.ruta_borrador(bid); os.makedirs(d)
         a1 = os.path.join(d, f'movimiento_original.{ext_a1}'); a2 = os.path.join(d, 'banco_qr_original.xlsx')
         shutil.copyfile(ruta_a1_tmp, a1); shutil.copyfile(ruta_a2_tmp, a2)
+        if ruta_plantilla_tmp: shutil.copyfile(ruta_plantilla_tmp, os.path.join(d, ARCH_PLANTILLA))
         meta = motor.metadatos_a1(a1)
         est = {'usuario': usuario, 'tarjeta': tarjeta, 'confirmaciones': [], 'elecciones': {}, 'reclasificaciones': {},
                'respaldos_manuales': [], 'rechazos': {}, 'origen': None, 'creado': db.ahora(),
                'archivo_movimiento': os.path.basename(a1), 'archivo_banco': 'banco_qr_original.xlsx',
                'nombres_subidos': nombres, 'caja': meta['caja'], 'presentado': None}
+        if ruta_plantilla_tmp: est.update(plantilla={'archivo': ARCH_PLANTILLA, 'nombre': nombres.get('plantilla')}, plantilla_origen=[], plantilla_descartes=[])
         self.guardar_estado(bid, est)
         return bid
 
@@ -134,6 +145,11 @@ class Almacen:
                'origen': {'cierre_id': c['id'], 'correlativo': c['correlativo'], 'fecha_cierre': c['fecha_cierre'], 'observacion': c['observacion_revision']},
                'archivo_movimiento': f'movimiento_original.{ext}', 'archivo_banco': 'banco_qr_original.xlsx',
                'nombres_subidos': {'movimiento': mov, 'banco': 'banco_qr_original.xlsx'}, 'caja': cj.get('caja', ''), 'presentado': None}
+        if cj.get('plantilla') and os.path.isfile(os.path.join(dc, ARCH_PLANTILLA)):
+            shutil.copyfile(os.path.join(dc, ARCH_PLANTILLA), os.path.join(d, ARCH_PLANTILLA))
+            est['nombres_subidos']['plantilla'] = ARCH_PLANTILLA
+            est.update(plantilla=dict(cj['plantilla'], archivo=ARCH_PLANTILLA), plantilla_origen=list(cj.get('plantilla_origen') or []),
+                       plantilla_descartes=list(cj.get('plantilla_descartes') or []))
         self.guardar_estado(bid, est)
         return bid
 
@@ -149,6 +165,75 @@ class Almacen:
             shutil.copyfile(ruta_a2, os.path.join(d, est['archivo_banco'])); est['nombres_subidos']['banco'] = nombre_a2
         self.guardar_estado(bid, est)
         return est
+
+    def reemplazar_plantilla(self, bid, est, usuario, ruta_tmp, nombre):
+        """Sube/reemplaza la plantilla de comunicaciones internas del borrador (ya validada) y la vuelve a aplicar desde cero
+        (las C.I. que vinieron de la plantilla anterior se quitan y se reinician los descartes). Devuelve (est_nuevo, resumen)."""
+        d = self.ruta_borrador(bid)
+        shutil.copyfile(ruta_tmp, os.path.join(d, ARCH_PLANTILLA))
+        nuevo = json.loads(json.dumps(est)); nuevo.setdefault('nombres_subidos', {})['plantilla'] = nombre
+        nuevo['plantilla'] = {'archivo': ARCH_PLANTILLA, 'nombre': nombre}; nuevo['plantilla_descartes'] = []
+        nuevo, resumen = self.aplicar_plantilla(bid, nuevo, usuario)
+        self.guardar_estado(bid, nuevo)
+        return nuevo, resumen
+
+    def aplicar_plantilla(self, bid, est, usuario):
+        """Lee la plantilla guardada en el borrador y reclasifica como C.I. las filas validas (mismo mecanismo y validaciones que el respaldo manual).
+        Las C.I. que vinieron de una aplicacion anterior de la plantilla se rehacen desde cero; las que el cajero deshizo (`plantilla_descartes`) no se reaplican.
+        Las filas con error NO se aplican y quedan en est['plantilla']['problemas']. Devuelve (est_nuevo, resumen); no guarda el estado."""
+        nuevo = json.loads(json.dumps(est)); pl = nuevo.get('plantilla')
+        ruta = os.path.join(self.ruta_borrador(bid), ARCH_PLANTILLA)
+        recl = nuevo.setdefault('reclasificaciones', {})
+        for nf in nuevo.get('plantilla_origen') or []: recl.pop(nf, None)
+        nuevo['plantilla_origen'] = []; nuevo.setdefault('plantilla_descartes', [])
+        if not pl or not os.path.isfile(ruta): return nuevo, None
+        filas = plantilla.leer(ruta)
+        res = self.conciliar(bid, nuevo)
+        idx = {}
+        for _, r in res['facturas'].iterrows(): idx.setdefault(str(r['Número Factura']), r)
+        fc = res['totales']['fecha_cierre']; prev = self.vigente(fc, usuario) if fc else None
+        excluir = prev['correlativo'] if prev else None
+        cuenta_nf, cuenta_bc = {}, {}
+        for r in filas:
+            if r['factura']: cuenta_nf.setdefault(r['factura'], []).append(r['fila'])
+            cn = catalogo.normalizar_codigo(r['codigo'])
+            if r['banco'] in plantilla.BANCOS_PLANTILLA and cn: cuenta_bc.setdefault((r['banco'], cn), []).append(r['fila'])
+        def otras(lista, fila): return ', '.join(str(x) for x in lista if x != fila)
+        problemas, aplicadas, descartadas = [], [], 0
+        for r in filas:
+            nf, banco, cn = r['factura'], r['banco'], catalogo.normalizar_codigo(r['codigo'])
+            def mal(motivo): problemas.append({'fila': r['fila'], 'factura': nf, 'banco': banco, 'codigo': cn, 'motivo': motivo})
+            faltan = []
+            if not nf: faltan.append('falta el N° de factura')
+            if not banco: faltan.append('falta el banco')
+            elif banco not in plantilla.BANCOS_PLANTILLA: faltan.append(f"el banco «{banco}» no es válido (use {', '.join(plantilla.BANCOS_PLANTILLA)})")
+            if not cn: faltan.append('falta el código de asignación')
+            if faltan: mal(faltan[0][0].upper() + '; '.join(faltan)[1:] + '.'); continue
+            if nf in (nuevo.get('plantilla_descartes') or []): descartadas += 1; continue
+            ok, msg, cn = catalogo.validar_codigo(banco, cn)
+            if not ok: mal(msg); continue
+            if len(cuenta_nf[nf]) > 1: mal(f'La factura {nf} está repetida en la plantilla (también en la fila {otras(cuenta_nf[nf], r["fila"])}).'); continue
+            if len(cuenta_bc[(banco, cn)]) > 1: mal(f'El código {cn} de {banco} está repetido en la plantilla (también en la fila {otras(cuenta_bc[(banco, cn)], r["fila"])}).'); continue
+            f = idx.get(nf)
+            if f is None: mal(f'La factura {nf} no existe en el movimiento del cajero.'); continue
+            e = str(f['estado_conciliacion'])
+            if e.startswith('EXCLUIDA'): mal(f'La factura {nf} está ANULADA en el movimiento; no puede ser comunicación interna.'); continue
+            if e == 'TARJETA': mal(f'La factura {nf} es de TARJETA; no puede ser comunicación interna.'); continue
+            if e in ('CONCILIADA', 'CONFIRMADA POR CAJERO'):
+                mal(f"Esta factura ya tiene un pago QR del banco (transacción {f['ID TRANSACCION']}); no puede ser comunicación interna."
+                    + (' Si no corresponde, use «Deshacer» en la pantalla de revisión.' if e == 'CONFIRMADA POR CAJERO' else '')); continue
+            if e == 'COMUNICACIÓN INTERNA': mal(f'La factura {nf} ya fue reclasificada a mano como comunicación interna; deshaga ese respaldo si prefiere usar la plantilla.'); continue
+            if e not in OBSERVADAS: mal(f"La factura {nf} tiene un estado que no permite reclasificarla ({e})."); continue
+            otra = next((o for o, d in recl.items() if d['banco'] == banco and catalogo.normalizar_codigo(d['codigo']) == cn), None)
+            if otra: mal(f'El código {cn} de {banco} ya está registrado en la factura {otra} de este cierre.'); continue
+            c = self.conflictos_ci_banco(banco, cn, excluir)
+            if c: mal(f"El código {cn} de {banco} ya está registrado en el cierre {c['correlativo']} (cajero {c['usuario']}).".replace('Ya', 'ya')); continue
+            nuevo['confirmaciones'] = [x for x in nuevo['confirmaciones'] if x != nf]; nuevo['elecciones'].pop(nf, None)
+            nuevo['respaldos_manuales'] = [x for x in nuevo.get('respaldos_manuales', []) if x != nf]
+            recl[nf] = {'banco': banco, 'codigo': cn}; nuevo['plantilla_origen'].append(nf); aplicadas.append(nf)
+        resumen = {'leidas': len(filas), 'aplicadas': len(aplicadas), 'con_problemas': len(problemas), 'descartadas': descartadas, 'problemas': problemas}
+        pl.update(resumen); nuevo['plantilla'] = pl
+        return nuevo, resumen
 
     # ---------------- respaldo manual ----------------
     def registrar_respaldo(self, bid, est, usuario, nf, banco, codigo):
@@ -363,6 +448,10 @@ class Almacen:
             shutil.copyfile(os.path.join(d, est['archivo_movimiento']), os.path.join(destino, mov))
             shutil.copyfile(os.path.join(d, est['archivo_banco']), os.path.join(destino, 'banco_qr_original.xlsx'))
             h_mov = sha256(os.path.join(destino, mov)); h_ban = sha256(os.path.join(destino, 'banco_qr_original.xlsx'))
+            h_pl = None
+            if est.get('plantilla') and os.path.isfile(os.path.join(d, ARCH_PLANTILLA)):
+                shutil.copyfile(os.path.join(d, ARCH_PLANTILLA), os.path.join(destino, ARCH_PLANTILLA)); h_pl = sha256(os.path.join(destino, ARCH_PLANTILLA))
+                if h_pl != sha256(os.path.join(d, ARCH_PLANTILLA)): raise ErrorUsuario('Error de copia de archivos.')
             if h_mov != sha256(os.path.join(d, est['archivo_movimiento'])): raise ErrorUsuario('Error de copia de archivos.')
             motor.exportar(res, os.path.join(destino, 'conciliacion.xlsx'))
             info = {'correlativo': corr, 'fecha_cierre': fc, 'caja': est.get('caja', ''), 'usuario': usuario, 'nombre': nombre,
@@ -370,6 +459,7 @@ class Almacen:
                     'estado_revision': ESTADO_INICIAL, 'reemplaza_a': prev['correlativo'] if prev else None,
                     'motivo_reemplazo': (motivo_reemplazo or '').strip() or None, 'alertas_formato': alertas,
                     'notas_descartes': notas_descartes(res)}
+            if h_pl: info.update(sha256_plantilla=h_pl, plantilla_origen=list(est.get('plantilla_origen') or []))
             pdf.generar(res, info, os.path.join(destino, 'cierre.pdf'))
             cj = {**info, 'archivo_movimiento': mov, 'estado_revision': ESTADO_INICIAL, 'reemplaza_a': prev['correlativo'] if prev else None,
                   'motivo_reemplazo': (motivo_reemplazo or '').strip() or None, 'estado_qr': t['Estado QR'],
@@ -380,16 +470,19 @@ class Almacen:
                   'tarjeta_declarada_por_cajero': est['tarjeta'], 'declaracion': 'El cajero declara conforme el presente cierre.',
                   'facturas': registros(res['facturas']),
                   'sha256_archivos': {n: sha256(os.path.join(destino, n)) for n in ('conciliacion.xlsx', 'cierre.pdf')}}
+            if h_pl:
+                cj.update(plantilla={k: v for k, v in est['plantilla'].items()}, plantilla_descartes=list(est.get('plantilla_descartes') or []))
+                cj['sha256_archivos'][ARCH_PLANTILLA] = h_pl
             with open(os.path.join(destino, 'cierre.json'), 'w', encoding='utf-8') as f:
                 json.dump(cj, f, ensure_ascii=False, indent=1, default=_json)
             for n in os.listdir(destino): os.chmod(os.path.join(destino, n), 0o444)
             qr_conc = t['QR conciliado automático (CONCILIADA)'] + t['QR confirmado por cajero']
             cur = con.execute('INSERT INTO cierres (correlativo, fecha_cierre, usuario, nombre, caja, qr_registrado, qr_conciliado, tarjeta_declarada, '
                               'tarjeta_sistema, total_cierre, estado_revision, version, reemplaza_a, motivo_reemplazo, presentado_en, ruta, '
-                              'sha256_movimiento, sha256_banco, ci_total) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                              'sha256_movimiento, sha256_banco, ci_total, sha256_plantilla) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                               (corr, fc, usuario, nombre, est.get('caja', ''), t['QR registrado'], qr_conc, t['Tarjeta declarada'],
                                t['Tarjeta según sistema'], t['Total cierre'], ESTADO_INICIAL, version, prev['id'] if prev else None,
-                               cj['motivo_reemplazo'], presentado_en, rel, h_mov, h_ban, t['C.I. según sistema']))
+                               cj['motivo_reemplazo'], presentado_en, rel, h_mov, h_ban, t['C.I. según sistema'], h_pl))
             cid = cur.lastrowid
             f = res['facturas']
             for _, r in f[f['estado_conciliacion'].isin(['CONCILIADA', 'CONFIRMADA POR CAJERO'])].iterrows():
@@ -608,6 +701,7 @@ class Almacen:
                               respaldos_manuales=cj.get('respaldos_manuales') or None, rechazos=cj.get('rechazos') or None)
         info = {k: cj.get(k) for k in ('correlativo', 'fecha_cierre', 'caja', 'usuario', 'nombre', 'presentado_en', 'version',
                                        'sha256_movimiento', 'sha256_banco', 'motivo_reemplazo')}
+        if cj.get('sha256_plantilla'): info['sha256_plantilla'] = cj['sha256_plantilla']; info['plantilla_origen'] = cj.get('plantilla_origen') or []
         info['alertas_formato'] = cj.get('alertas_formato') or []; info['notas_descartes'] = cj.get('notas_descartes') or []
         u_rev = self.usuario_get(c['revisado_por']) if c['revisado_por'] else None   # nombre completo solo para mostrar; revisado_por sigue siendo el login
         info['revisado_por_nombre'] = u_rev['nombre'] if u_rev is not None and u_rev['nombre'] else c['revisado_por']

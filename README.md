@@ -31,3 +31,8 @@ Los reportes reales nunca van al repositorio (ver `.gitignore`).
 - Superadmin: «Revertir revisión» (CONFORME o RECHAZADO a PENDIENTE, motivo de 10+ caracteres, no si está REEMPLAZADO; el historial queda en `revisiones_historial` y en la auditoría), `/admin/usuarios` (crear, rol, activar/desactivar, restablecer clave; siempre queda al menos un superadmin activo) y `/admin/auditoria` (50 por página, filtros por usuario, acción y fecha).
 - «Mi cuenta» (`/cuenta`): cualquier usuario cambia su clave (mínimo 8 caracteres).
 - Base de datos: esquema 3 (tablas `usuarios` y `revisiones_historial`); la migración es idempotente y pasa las revisiones v2 al historial.
+
+## v8: plantilla Excel de comunicaciones internas
+- El cajero llena durante el día la plantilla (`/plantilla-comunicaciones-internas`, copia en `app/static/plantilla_comunicaciones_internas.xlsx`, regenerable con `python scripts/generar_plantilla.py`): N° factura | Banco | Código de asignación. La sube en «Nuevo cierre» (campo opcional) junto al movimiento y el reporte QR; importe, cliente y fecha salen del movimiento.
+- Lectura tolerante (`app/plantilla.py`) y validación por fila (`Almacen.aplicar_plantilla`): las filas válidas se aplican como `reclasificaciones` (mismas reglas que el respaldo manual; el formato por banco sigue siendo alerta no bloqueante); las filas con error no se aplican y se listan en «Filas de la plantilla con problemas». «Reemplazar plantilla» rehace la importación; lo deshecho por el cajero queda en `plantilla_descartes` y no se reaplica.
+- Se guarda como `comunicaciones_internas_original.xlsx` (con SHA-256 en `cierre.json`, columna `cierres.sha256_plantilla` y PDF). Esquema 5 (migración idempotente). «Editar y reenviar» la copia y permite reemplazarla.

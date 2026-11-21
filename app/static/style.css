@@ -121,3 +121,4 @@ select{width:100%}
 .confirmar-todas{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin:.4rem 0 .8rem}#dlg-confirmar-todas{max-width:min(46rem,94vw)}#dlg-confirmar-todas .tabla-wrap{margin-bottom:1rem}
 
 .descartado{background:var(--ambar-c);border-radius:6px;padding:.4rem .6rem;margin-bottom:.5rem;font-size:.9rem;display:grid;gap:.4rem;justify-items:start}
+.desde-pl{color:var(--g-osc);font-weight:600}.resumen-pl{margin:.2rem 0 .6rem}.plantilla-resumen h2{margin-top:.1rem}.alertas-rev h3{margin:.1rem 0 .4rem;color:#5e3d00;font-size:1rem}

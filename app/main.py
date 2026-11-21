@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import auth, catalogo, formato, servicio
+from . import auth, catalogo, formato, plantilla as plantilla_xl, servicio
 from .servicio import Almacen, ErrorUsuario, MAX_BYTES
 
 log = logging.getLogger('cierre')
@@ -145,6 +145,14 @@ def create_app():
                       f_alertas=con_al, filtrado=bool(estado or desde or hasta or con_al))
 
     # ---------------- nuevo cierre ----------------
+    @app.get('/plantilla-comunicaciones-internas')
+    def descargar_plantilla(request: Request):
+        u = usuario(request)
+        if not os.path.isfile(plantilla_xl.RUTA_ESTATICA): plantilla_xl.generar_plantilla(plantilla_xl.RUTA_ESTATICA)
+        alm.auditar(u['usuario'], 'descarga_plantilla', {})
+        return FileResponse(plantilla_xl.RUTA_ESTATICA, media_type=servicio.ARCHIVOS_CIERRE['conciliacion.xlsx'], filename=plantilla_xl.NOMBRE_DESCARGA,
+                            content_disposition_type='attachment')
+
     @app.get('/nuevo', response_class=HTMLResponse)
     def nuevo(request: Request):
         cajero(request); return render(request, 'nuevo.html', max_mb=MAX_BYTES // 1048576)
@@ -163,9 +171,20 @@ def create_app():
         if n == 0: raise ErrorUsuario(f'{etiqueta}: el archivo está vacío.')
         return ruta, nombre
 
+    def aplicar_y_avisar(request, u, bid, est, resumen, nombre, extra=''):
+        """Aplica la plantilla del borrador (si `resumen` es None) y la deja guardada; auditoria y aviso con el resumen."""
+        if resumen is None:
+            est, resumen = alm.aplicar_plantilla(bid, est, u['usuario']); alm.guardar_estado(bid, est)
+        d = alm.ruta_borrador(bid)
+        alm.auditar(u['usuario'], 'plantilla_aplicada', {'borrador': bid, 'archivo': nombre, 'sha256': servicio.sha256(os.path.join(d, servicio.ARCH_PLANTILLA)),
+                                                         'leidas': resumen['leidas'], 'aplicadas': resumen['aplicadas'], 'con_problemas': resumen['con_problemas']})
+        n, a, p = resumen['leidas'], resumen['aplicadas'], resumen['con_problemas']
+        flash(request, f"Plantilla leída: {n} {'fila' if n == 1 else 'filas'} · {a} {'aplicada' if a == 1 else 'aplicadas'} · {p} con {'problema' if p == 1 else 'problemas'}."
+                       + (' Revise el cuadro «Filas de la plantilla con problemas».' if p else '') + (' ' + extra if extra else ''), 'ambar' if p else 'ok')
+
     @app.post('/nuevo')
     async def nuevo_post(request: Request, movimiento: UploadFile = File(None), banco: UploadFile = File(None),
-                         tarjeta: str = Form(''), csrf: str = Form('')):
+                         plantilla: UploadFile = File(None), tarjeta: str = Form(''), csrf: str = Form('')):
         u = cajero(request); verificar_csrf(request, csrf)
         with tempfile.TemporaryDirectory() as tmp:
             try:
@@ -175,16 +194,20 @@ def create_app():
                 p1, n1 = await guardar_subida(movimiento, tmp, 'Movimiento del cajero', ('xls', 'xlsx'))
                 p2, n2 = await guardar_subida(banco, tmp, 'Reporte QR BANECO', ('xlsx',))
                 ext, _ = servicio.validar_a1(p1); servicio.validar_a2(p2)
+                p3 = n3 = None
+                if plantilla is not None and plantilla.filename:
+                    p3, n3 = await guardar_subida(plantilla, tmp, 'Plantilla de comunicaciones internas', ('xlsx',)); servicio.validar_plantilla(p3)
                 from . import motor
                 try: r = motor.conciliar(p1, p2, tj)
                 except Exception: raise ErrorUsuario('No se pudo conciliar: ' + servicio.MSG_A1)
                 if r['totales']['fecha_cierre'] is None: raise ErrorUsuario('El movimiento del cajero no tiene facturas válidas.')
                 fc = str(r['totales']['fecha_cierre']); bloqueo = servicio.regla_vigente(alm.vigente(fc, u['usuario']), None, fc)
                 if bloqueo: raise ErrorUsuario(bloqueo)
-                bid = alm.crear_borrador(u['usuario'], p1, ext, p2, tj, {'movimiento': n1, 'banco': n2})
+                bid = alm.crear_borrador(u['usuario'], p1, ext, p2, tj, {'movimiento': n1, 'banco': n2, **({'plantilla': n3} if n3 else {})}, p3)
             except ErrorUsuario as e:
                 return render(request, 'nuevo.html', 400, max_mb=MAX_BYTES // 1048576, error=str(e), tarjeta=tarjeta)
-        alm.auditar(u['usuario'], 'borrador_creado', {'borrador': bid, 'tarjeta': tj, 'archivos': {'movimiento': n1, 'banco': n2}})
+        alm.auditar(u['usuario'], 'borrador_creado', {'borrador': bid, 'tarjeta': tj, 'archivos': {'movimiento': n1, 'banco': n2, **({'plantilla': n3} if n3 else {})}})
+        if n3: aplicar_y_avisar(request, u, bid, alm.estado(bid), None, n3)
         return RedirectResponse(f'/borrador/{bid}', 303)
 
     # ---------------- borrador ----------------
@@ -210,6 +233,12 @@ def create_app():
         f = res['facturas']; b = res['banco']; qr = f[f['Tipo (motor)'].isin(['QR', 'C.I.'])]
         ci = {r['factura']: r for r in res.get('ci', [])}
         af = servicio.alertas_formato(res, est); af_por_nf = {a['factura']: a for a in af}
+        desde_pl = set(est.get('plantilla_origen') or [])
+        pl = est.get('plantilla'); pl_vista = None
+        if pl:
+            en_ci = {str(r['factura']) for r in res.get('ci', [])}
+            vivos = [p for p in (pl.get('problemas') or []) if p['factura'] not in en_ci]    # los que el cajero ya resolvio a mano no se listan
+            pl_vista = {**pl, 'problemas_vivos': vivos, 'resueltos': len(pl.get('problemas') or []) - len(vivos), 'descartadas_vivas': len(est.get('plantilla_descartes') or [])}
         desc_por_nf = {}
         for d in res.get('descartes', []): desc_por_nf.setdefault(d['factura'], []).append(d)
         filas = []
@@ -219,12 +248,12 @@ def create_app():
             filas.append({'nf': nf, 'cliente': r['Razon Social'], 'estudiante': r['Nombre Estudiante'], 'monto': r['Monto'], 'hora': r['hora_factura'],
                           'estado': e, 'nivel': nivel, 'id': r['ID TRANSACCION'], 'titular': r['TITULAR ORIGEN'], 'hora_banco': r['hora_banco'],
                           'observada': obs, 'manual': nivel == 'RESPALDO MANUAL', 'ci': ci.get(nf), 'alerta_fmt': af_por_nf.get(str(nf)),
-                          'deshacer': e == 'CONFIRMADA POR CAJERO' or e == 'COMUNICACIÓN INTERNA',
+                          'deshacer': e == 'CONFIRMADA POR CAJERO' or e == 'COMUNICACIÓN INTERNA', 'desde_plantilla': str(nf) in desde_pl,
                           'candidatos': servicio.candidatos(res, nf) if e in ('SIN RESPALDO', 'AMBIGUO') else [],
                           'descartes': desc_por_nf.get(str(nf), [])})
         observadas = [x for x in filas if x['observada']]; conciliadas = [x for x in filas if not x['observada']]
         lista = servicio.conceptos(t)
-        return dict(bid=bid, est=est, t=t, ev=ev, observadas=observadas, conciliadas=conciliadas, tab_inicial='observadas' if observadas else 'conciliadas',
+        return dict(bid=bid, est=est, t=t, ev=ev, pl=pl_vista, observadas=observadas, conciliadas=conciliadas, tab_inicial='observadas' if observadas else 'conciliadas',
                     conceptos=lista, total=servicio.total_conceptos(lista), origen=est.get('origen'),
                     qr_conc=t['QR conciliado automático (CONCILIADA)'] + t['QR confirmado por cajero'],
                     ajenos=b[b['estado_banco'] == 'AJENO / NO CORRESPONDE AL CAJERO'].to_dict('records'),
@@ -267,6 +296,10 @@ def create_app():
     def _des(est, nf, _):
         est['confirmaciones'] = [x for x in est['confirmaciones'] if x != nf]; est['elecciones'].pop(nf, None)
         est['respaldos_manuales'] = [x for x in est.get('respaldos_manuales', []) if x != nf]; (est.get('reclasificaciones') or {}).pop(nf, None)
+        if nf in (est.get('plantilla_origen') or []):    # si venia de la plantilla, no se vuelve a aplicar sola al recalcular
+            est['plantilla_origen'] = [x for x in est['plantilla_origen'] if x != nf]
+            est.setdefault('plantilla_descartes', [])
+            if nf not in est['plantilla_descartes']: est['plantilla_descartes'].append(nf)
     def _asig(est, nf, idt):
         if nf and idt: est['elecciones'][nf] = idt
     @app.post('/borrador/{bid}/confirmar-todas')
@@ -352,8 +385,23 @@ def create_app():
         flash(request, f'Tarjeta declarada actualizada a Bs {formato.bs(tj)}.', 'ok')
         return RedirectResponse(f'/borrador/{bid}', 303)
 
+    @app.post('/borrador/{bid}/plantilla')
+    async def subir_plantilla(request: Request, bid: str, plantilla: UploadFile = File(None), csrf: str = Form('')):
+        u, est = cargar_borrador(request, bid); verificar_csrf(request, csrf)
+        if est.get('presentado'): raise StarletteHTTPException(404, 'Este borrador ya fue presentado.')
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                if plantilla is None or not plantilla.filename: raise ErrorUsuario('Seleccione el archivo de la plantilla (.xlsx).')
+                p3, n3 = await guardar_subida(plantilla, tmp, 'Plantilla de comunicaciones internas', ('xlsx',)); servicio.validar_plantilla(p3)
+                nuevo, resumen = alm.reemplazar_plantilla(bid, est, u['usuario'], p3, n3)
+            except ErrorUsuario as e:
+                flash(request, str(e), 'error'); return RedirectResponse(f'/borrador/{bid}', 303)
+        aplicar_y_avisar(request, u, bid, nuevo, resumen, n3)
+        return RedirectResponse(f'/borrador/{bid}', 303)
+
     @app.post('/borrador/{bid}/archivos')
-    async def reemplazar_archivos(request: Request, bid: str, movimiento: UploadFile = File(None), banco: UploadFile = File(None), csrf: str = Form('')):
+    async def reemplazar_archivos(request: Request, bid: str, movimiento: UploadFile = File(None), banco: UploadFile = File(None),
+                                  plantilla: UploadFile = File(None), csrf: str = Form('')):
         u, est = cargar_borrador(request, bid); verificar_csrf(request, csrf)
         if est.get('presentado'): raise StarletteHTTPException(404, 'Este borrador ya fue presentado.')
         if not est.get('origen'): raise StarletteHTTPException(403, 'Solo se pueden reemplazar archivos al corregir un cierre rechazado.')
@@ -364,17 +412,25 @@ def create_app():
                     p1, n1 = await guardar_subida(movimiento, tmp, 'Movimiento del cajero', ('xls', 'xlsx')); ext, _ = servicio.validar_a1(p1)
                 if banco is not None and banco.filename:
                     p2, n2 = await guardar_subida(banco, tmp, 'Reporte QR BANECO', ('xlsx',)); servicio.validar_a2(p2)
-                if not p1 and not p2: raise ErrorUsuario('Seleccione al menos un archivo para reemplazar.')
+                p3 = n3 = None
+                if plantilla is not None and plantilla.filename:
+                    p3, n3 = await guardar_subida(plantilla, tmp, 'Plantilla de comunicaciones internas', ('xlsx',)); servicio.validar_plantilla(p3)
+                if not p1 and not p2 and not p3: raise ErrorUsuario('Seleccione al menos un archivo para reemplazar.')
                 from . import motor
                 a1 = p1 or os.path.join(alm.ruta_borrador(bid), est['archivo_movimiento']); a2 = p2 or os.path.join(alm.ruta_borrador(bid), est['archivo_banco'])
                 try: r = motor.conciliar(a1, a2, est['tarjeta'])
                 except Exception: raise ErrorUsuario('No se pudo conciliar con esos archivos: ' + servicio.MSG_A1)
                 if r['totales']['fecha_cierre'] is None: raise ErrorUsuario('El movimiento del cajero no tiene facturas válidas.')
-                alm.reemplazar_archivos(bid, est, p1, ext, n1, p2, n2)
+                est = alm.reemplazar_archivos(bid, est, p1, ext, n1, p2, n2)
+                resumen = None
+                if p3: est, resumen = alm.reemplazar_plantilla(bid, est, u['usuario'], p3, n3)
+                elif est.get('plantilla') and (p1 or p2):    # archivos nuevos: se revalida la plantilla ya cargada (sin reiniciar lo que el cajero deshizo)
+                    est, resumen = alm.aplicar_plantilla(bid, est, u['usuario']); alm.guardar_estado(bid, est)
             except ErrorUsuario as e:
                 flash(request, str(e), 'error'); return RedirectResponse(f'/borrador/{bid}', 303)
-        alm.auditar(u['usuario'], 'archivos_reemplazados', {'borrador': bid, 'movimiento': n1, 'banco': n2, 'origen': est['origen']['correlativo']})
-        flash(request, 'Archivos reemplazados. Revise de nuevo las facturas observadas y las decisiones guardadas.', 'ok')
+        alm.auditar(u['usuario'], 'archivos_reemplazados', {'borrador': bid, 'movimiento': n1, 'banco': n2, 'plantilla': n3, 'origen': est['origen']['correlativo']})
+        if resumen is not None: aplicar_y_avisar(request, u, bid, est, resumen, n3 or est['plantilla'].get('nombre'), 'Archivos reemplazados: revise de nuevo las facturas observadas y las decisiones guardadas.')
+        else: flash(request, 'Archivos reemplazados. Revise de nuevo las facturas observadas y las decisiones guardadas.', 'ok')
         return RedirectResponse(f'/borrador/{bid}', 303)
 
     @app.post('/borrador/{bid}/presentar')
@@ -440,6 +496,7 @@ def create_app():
         return render(request, 'cierre.html', notas_desc=notas_desc, c=c, pdf_vigente=pdf_vigente(c), recien=q_presentado(request, cid) and u['usuario'] == c['usuario'],
                       pendiente_hace=hace_dias(c['presentado_en']), archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc, extracto=extracto,
                       total=servicio.total_conceptos(conc) if cj else None, ci=(cj or {}).get('comunicaciones_internas', []),
+                      pl=(cj or {}).get('plantilla'), desde_pl=set((cj or {}).get('plantilla_origen') or []),
                       alertas_c=alertas_c, n_alertas_pend=sum(1 for a in alertas_c if not a['revisada_en']),
                       es_ingresos=u['rol'] in ('ingresos', 'superadmin'), es_super=u['rol'] == 'superadmin',
                       es_dueno=u['rol'] in ('cajero', 'superadmin') and c['usuario'] == u['usuario'],
