@@ -427,7 +427,7 @@ function vacio(v: string | number | boolean | null | undefined): boolean {
 }
 
 function norm(v: string | number | boolean | null | undefined): string {
-  return String(v === null || v === undefined ? "" : v).normalize("NFD").replace(/[̀-ͯ]/g, "")
+  return String(v === null || v === undefined ? "" : v).normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[°º.]/g, "").replace(/\s+/g, " ").trim();
 }
 
