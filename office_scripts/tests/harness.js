@@ -16,7 +16,7 @@ function cargarMain() {
   const errores = (out.diagnostics || []).filter((d) => d.category === ts.DiagnosticCategory.Error);
   if (errores.length) throw new Error('TS: ' + errores.map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n')).join('; '));
   if (/^\s*export\s/m.test(src)) throw new Error('El script no debe usar export');
-  const ctx = vm.createContext({ console });
+  const ctx = vm.createContext({ console, ExcelScript: { ConditionalFormatType: { custom: 'Custom' } } });
   vm.runInContext(out.outputText, ctx);
   return ctx.main;
 }
@@ -30,7 +30,7 @@ function colIndice(l) { let n = 0; for (const ch of l) n = n * 26 + ch.charCodeA
 
 class Hoja {
   constructor(nombre, filas) {
-    this.nombre = nombre; this.celdas = new Map(); this.formatos = new Map(); this.escrituras = [];
+    this.nombre = nombre; this.celdas = new Map(); this.formatos = new Map(); this.escrituras = []; this.formulas = new Map(); this.condFormats = [];
     (filas || []).forEach((f, r) => f.forEach((c, k) => { if (c !== null && c !== undefined && c !== '') this.celdas.set(r + ',' + k, c); }));
   }
   get(r, c) { const x = this.celdas.get(r + ',' + c); return x === undefined ? '' : x; }
@@ -75,6 +75,16 @@ class Rango {
   getValues() { return this._mat((r, c) => val(this.h.get(r, c))); }
   getText() { return this._mat((r, c) => txt(this.h.get(r, c))); }
   getValue() { return val(this.h.get(this.r, this.c)); }
+  getFormulas() { return this._mat((r, c) => this.h.formulas.get(r + ',' + c) || ''); }
+  setFormulas(m) {
+    if (m.length !== this.nr || m[0].length !== this.nc) throw new Error(`setFormulas: dimensiones ${m.length}x${m[0].length} vs rango ${this.nr}x${this.nc}`);
+    m.forEach((f, i) => f.forEach((v, j) => this.h.formulas.set((this.r + i) + ',' + (this.c + j), v)));
+  }
+  addConditionalFormat(tipo) {
+    const reg = { tipo, filaDesde: this.r, col: this.c, filas: this.nr, formula: null };
+    this.h.condFormats.push(reg);
+    return { getCustom: () => ({ getRule: () => ({ setFormula: (f) => { reg.formula = f; } }), getFormat: () => noop() }) };
+  }
   setValues(m) {
     if (m.length !== this.nr || m[0].length !== this.nc) throw new Error(`setValues: dimensiones ${m.length}x${m[0].length} vs rango ${this.nr}x${this.nc}`);
     m.forEach((f, i) => f.forEach((v, j) => { this.h.set(this.r + i, this.c + j, v); this.h.escrituras.push({ r: this.r + i, c: this.c + j, v }); }));
@@ -113,6 +123,15 @@ const ENC_LOTE = ['Acción', 'Importe', 'Código de asignación', 'N° factura',
 // fila de lote: [accion, importe, codigo, factura, correlativo, fecha, (G)]
 function hojaLote(filas, nombre = 'TRINIDAD') { return new Hoja(nombre, [ENC_LOTE.slice(), ...filas]); }
 
+const ENC_LOTE_V2 = [...ENC_LOTE, 'Banco'];
+// lote con columna Banco: filas [accion, importe, codigo, factura, correlativo, fecha, banco] -> A..F, G/H/I vacías, J
+function hojaLoteV2(filas, nombre = 'TRINIDAD') {
+  return new Hoja(nombre, [ENC_LOTE_V2.slice(), ...filas.map((f) => [f[0], f[1], f[2], f[3], f[4], f[5], '', '', '', f[6]])]);
+}
+const ENC_REGISTRO = ['Fecha cierre', 'N° factura', 'Importe', 'Banco', 'Código de asignación', 'Correlativo cierre', 'Registrado el', 'Estado', 'Duplicado'];
+// REGISTRO preexistente: filas [fecha, factura, importe, banco, codigo, correlativo, registradoEl, estado]
+function hojaRegistro(filas) { return new Hoja('REGISTRO', [ENC_REGISTRO.slice(), ...filas]); }
+
 const correr = (libro) => cargarMain()(libro);
 
-module.exports = { cargarMain, Hoja, Libro, hojaExtracto, hojaLote, correr, ENC_LOTE, val, txt };
+module.exports = { cargarMain, Hoja, Libro, hojaExtracto, hojaLote, hojaLoteV2, hojaRegistro, correr, ENC_LOTE, ENC_LOTE_V2, ENC_REGISTRO, val, txt };

@@ -497,11 +497,11 @@ def create_app():
         alertas_c = [dict(a) for a in alm.alertas_de(cid)]
         extracto = None
         if u['rol'] in ('ingresos', 'superadmin'):
-            movs = alm.movimientos_cierre(cid)
-            if movs:
-                t_m, n_m, tot_m = servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs)
-                extracto = {'n': n_m, 'total': tot_m, 'marcar': t_m,
-                            'liberar': servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs, 'LIBERAR')[0] if u['rol'] == 'superadmin' else None}
+            movs = alm.movimientos_cierre(cid); cis = alm.ci_cierre(cid)
+            if movs or cis:
+                t_m, n_m, n_c, tot_m = servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs, '', cis)
+                extracto = {'n': n_m, 'n_ci': n_c, 'total': tot_m, 'marcar': t_m,
+                            'liberar': servicio.tsv_extracto(c['correlativo'], c['fecha_cierre'], movs, 'LIBERAR', cis)[0] if u['rol'] == 'superadmin' else None}
         notas_desc = (cj or {}).get('notas_descartes', []) if u['rol'] in ('ingresos', 'superadmin') else []
         return render(request, 'cierre.html', notas_desc=notas_desc, c=c, pdf_vigente=pdf_vigente(c), recien=q_presentado(request, cid) and u['usuario'] == c['usuario'],
                       pendiente_hace=hace_dias(c['presentado_en']), archivos=archivos, cj=cj, anterior=rem, posterior=posterior, conceptos=conc, extracto=extracto,

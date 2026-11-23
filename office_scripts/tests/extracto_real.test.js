@@ -37,11 +37,17 @@ test('extracto real: los códigos del reporte del 16/10 existen y salen OCUPADO 
   const ext = new Hoja(d.hoja, d.filas);
   const lote = hojaLote(ids.map((x, i) => ['', x[2], x[0], String(60000 + i), 'CC-2026-99999', '16/10/2026']));
   const antes = JSON.stringify([...ext.celdas]);
-  const r = correr(new Libro([ext, lote]));
-  assert.equal(r, 'Lote: 14 filas · ✔ 0 · ✖ 14 · Escrito: no');
+  const lib = new Libro([ext, lote]);
+  const r = correr(lib);
+  assert.ok(String(r).startsWith('Lote: 14 filas · ✔ 0 · ✖ 14 · Extracto: escrito no'));
   for (let i = 1; i <= 14; i++) {
     const g = lote.valorTexto(i, 6);
     assert.match(g, /^✖ OCUPADO: .*I=TRINIDAD - 10/, `fila ${i}: ${g}`);
   }
   assert.equal(JSON.stringify([...ext.celdas]), antes);
+  // nada se escribe en REGISTRO: solo el encabezado
+  const registro = lib.getWorksheet('REGISTRO');
+  assert.ok(registro);
+  assert.equal(registro.valorTexto(1, 1), '');
+  assert.equal(registro.valorTexto(1, 4), '');
 });

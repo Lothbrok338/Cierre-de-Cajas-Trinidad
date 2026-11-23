@@ -135,7 +135,7 @@
 {% if extracto %}
 <section class="tarjeta" aria-label="Copiar para el extracto">
   <h2>Extracto bancario BANECO</h2>
-  <p class="ayuda"><strong>{{ extracto.n }}</strong> factura{{ '' if extracto.n == 1 else 's' }} QR con ID de transacción · Total <strong>{{ extracto.total | bs }}</strong> Bs. Copie y pegue en la hoja TRINIDAD del Excel (sin encabezado, desde la columna A).</p>
+  <p class="ayuda"><strong>{{ extracto.n }}</strong> QR BANECO + <strong>{{ extracto.n_ci }}</strong> comunicaci{{ 'ón interna' if extracto.n_ci == 1 else 'ones internas' }} · total Bs <strong>{{ extracto.total | bs }}</strong>. Copie y pegue en la hoja TRINIDAD del Excel (sin encabezado, desde la celda A2).</p>
   <div class="botones-izq">
     <button class="btn btn-prim" type="button" data-copiar="datos-marcar" data-estado="estado-copia">Copiar para el extracto</button>
     {% if extracto.liberar %}<button class="btn btn-sec" type="button" data-copiar="datos-liberar" data-estado="estado-copia">Copiar para liberar</button>{% endif %}

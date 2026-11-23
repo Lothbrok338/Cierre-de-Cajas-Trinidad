@@ -17,12 +17,31 @@ def filas(t): return [l.split('\t') for l in t.split('\n')] if t else []
 
 
 def test_tsv_funcion_pura():
-    movs = [{'id_transaccion': '111', 'factura': '1', 'monto': 1592.0}, {'id_transaccion': '222', 'factura': '2', 'monto': 1234567.5}]
-    t, n, tot = servicio.tsv_extracto('CC-2026-00007', '2026-10-16', movs)
-    assert t == '\t1592.00\t111\t1\tCC-2026-00007\t16/10/2026\n\t1234567.50\t222\t2\tCC-2026-00007\t16/10/2026'
-    assert (n, tot) == (2, 1236159.5)
-    assert servicio.tsv_extracto('C', '2026-01-02', movs, 'LIBERAR')[0].startswith('LIBERAR\t1592.00\t111\t1\tC\t02/01/2026')
-    assert servicio.tsv_extracto('C', '2026-01-02', []) == ('', 0, 0)
+    movs = [{'id_transaccion': '222', 'factura': '10', 'monto': 1234567.5}, {'id_transaccion': '111', 'factura': '9', 'monto': 1592.0}]
+    t, n, nci, tot = servicio.tsv_extracto('CC-2026-00007', '2026-10-16', movs)
+    assert t == ('\t1592.00\t111\t9\tCC-2026-00007\t16/10/2026\t\t\t\tQR BANECO\n'
+                 '\t1234567.50\t222\t10\tCC-2026-00007\t16/10/2026\t\t\t\tQR BANECO')
+    assert (n, nci, tot) == (2, 0, 1236159.5)
+    assert all(len(l.split('\t')) == 10 for l in t.split('\n'))
+    assert servicio.tsv_extracto('C', '2026-01-02', movs, 'LIBERAR')[0].startswith('LIBERAR\t1592.00\t111\t9\tC\t02/01/2026')
+    assert servicio.tsv_extracto('C', '2026-01-02', []) == ('', 0, 0, 0)
+
+
+CI = [{'factura': '12', 'banco': 'UNION', 'codigo': '4567', 'monto': 300.0}, {'factura': '11', 'banco': 'BANECO', 'codigo': '5551234', 'monto': 1592.0}]
+
+
+def test_tsv_con_ci_orden_y_liberar():
+    movs = [{'id_transaccion': '111', 'factura': '9', 'monto': 100.0}]
+    t, n, nci, tot = servicio.tsv_extracto('C', '2026-10-16', movs, '', CI)
+    f = filas(t)
+    assert [x[3] for x in f] == ['9', '11', '12'] and all(len(x) == 10 for x in f)     # primero QR, luego C.I. por factura
+    assert [x[0] for x in f] == ['', 'REGISTRAR', 'REGISTRAR'] and [x[9] for x in f] == ['QR BANECO', 'BANECO', 'UNION']
+    assert f[1][:6] == ['REGISTRAR', '1592.00', '5551234', '11', 'C', '16/10/2026'] and f[1][6:9] == ['', '', '']
+    assert (n, nci, tot) == (1, 2, 1992.0)
+    tl = servicio.tsv_extracto('C', '2026-10-16', movs, 'LIBERAR', CI)[0]
+    assert [x[0] for x in filas(tl)] == ['LIBERAR'] * 3 and [x[9] for x in filas(tl)] == ['QR BANECO', 'BANECO', 'UNION']
+    solo_ci = servicio.tsv_extracto('C', '2026-10-16', [], '', CI)
+    assert solo_ci[1:] == (0, 2, 1892.0)
 
 
 def test_boton_y_contenido_ingresos_y_super(app, sint):
@@ -33,8 +52,8 @@ def test_boton_y_contenido_ingresos_y_super(app, sint):
     assert [x[2] for x in f] == ['700000001', '700000002', '700000003']
     assert [x[3] for x in f] == ['30001', '30002', '30003'] and [x[1] for x in f] == ['500.00', '300.00', '700.00']
     corr = db(app).execute('select correlativo from cierres').fetchone()[0]
-    assert all(x[0] == '' and x[4] == corr and x[5] == '16/10/2026' and len(x) == 6 for x in f)
-    assert '<strong>3</strong> facturas QR' in h and '1,500.00' in h
+    assert all(x[0] == '' and x[4] == corr and x[5] == '16/10/2026' and len(x) == 10 and x[9] == 'QR BANECO' for x in f)
+    assert '<strong>3</strong> QR BANECO + <strong>0</strong> comunicaciones internas' in h and '1,500.00' in h
     sup = login(app, 'sup'); hs = sup.get(f'/cierres/{cid}').text
     assert 'Copiar para liberar' in hs
     assert all(x[0] == 'LIBERAR' for x in filas(tsv_de(hs, 'datos-liberar')))
@@ -64,13 +83,31 @@ def sint_manual_ci(tmp_path):
     return {'a1': S.crear_a1(str(d / 'm.xlsx')), 'a2': S.crear_a2(str(d / 'b.xlsx'), banco)}
 
 
-def test_comunicacion_interna_no_va(app, sint):
+def test_comunicacion_interna_va_en_el_mismo_pegado(app, sint):
     c, bid = borrador_nuevo(app, sint)
     respaldo(c, bid, '30003', 'BNB', 'DEP-12345')
     r = presentar(c, bid); assert r.status_code == 303, flash_de(c, bid)
     cid = int(r.headers['location'].rsplit('/', 1)[1])
-    f = filas(tsv_de(login(app, 'ing').get(f'/cierres/{cid}').text, 'datos-marcar'))
-    assert [x[3] for x in f] == ['30001', '30002'] and all('DEP-12345' not in ','.join(x) for x in f)
+    h = login(app, 'ing').get(f'/cierres/{cid}').text
+    f = filas(tsv_de(h, 'datos-marcar'))
+    assert [x[3] for x in f] == ['30001', '30002', '30003'] and [x[9] for x in f] == ['QR BANECO', 'QR BANECO', 'BNB']
+    assert f[2][0] == 'REGISTRAR' and f[2][1] == '700.00' and f[2][2] == 'DEP-12345' and all(len(x) == 10 for x in f)
+    assert '<strong>2</strong> QR BANECO + <strong>1</strong> comunicación interna' in h and '1,500.00' in h
+    assert 'datos-liberar' not in h
+    hs = login(app, 'sup').get(f'/cierres/{cid}').text
+    fl = filas(tsv_de(hs, 'datos-liberar'))
+    assert [x[0] for x in fl] == ['LIBERAR'] * 3 and [x[9] for x in fl] == ['QR BANECO', 'QR BANECO', 'BNB']
+    assert 'Copiar para liberar' in hs
+
+
+def test_solo_ci_sin_qr_muestra_botones(app, sint):
+    # cierre sin QR con ID pero con C.I.: igual hay boton (solo C.I.)
+    c, cid = cierre_presentado(app, sint)
+    con = db(app); con.execute('delete from cierre_movimientos where cierre_id=?', (cid,))
+    con.execute("insert into cierre_ci (cierre_id, factura, banco, codigo, monto) values (?,?,?,?,?)", (cid, '30009', 'UNION', '4567', 250.0)); con.commit()
+    h = login(app, 'ing').get(f'/cierres/{cid}').text
+    f = filas(tsv_de(h, 'datos-marcar'))
+    assert len(f) == 1 and f[0][0] == 'REGISTRAR' and f[0][9] == 'UNION' and '<strong>0</strong> QR BANECO + <strong>1</strong>' in h
 
 
 real = pytest.mark.skipif(not DIR_REAL or not glob.glob(os.path.join(DIR_REAL, '*IngresosDiarios*.xls')), reason='DATOS_PRUEBA_DIR sin datos reales')
@@ -87,7 +124,7 @@ def test_tsv_datos_reales(app):
     row = db(app).execute('select correlativo, qr_conciliado, fecha_cierre from cierres where id=?', (cid,)).fetchone()
     h = login(app, 'sup').get(f'/cierres/{cid}').text
     f = filas(tsv_de(h, 'datos-marcar'))
-    assert len(f) == 14 and all(len(x) == 6 and x[0] == '' and x[4] == row[0] for x in f)
+    assert len(f) == 14 and all(len(x) == 10 and x[0] == '' and x[9] == 'QR BANECO' and x[4] == row[0] for x in f)
     assert abs(sum(float(x[1]) for x in f) - row[1]) < 0.005
     assert len({x[2] for x in f}) == 14 and all(re.fullmatch(r'\d{6,}', x[2]) for x in f)
     assert all(re.fullmatch(r'\d+\.\d\d', x[1]) for x in f) and {x[5] for x in f} == {'16/10/2026'}

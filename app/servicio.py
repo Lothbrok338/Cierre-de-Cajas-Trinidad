@@ -443,6 +443,13 @@ class Almacen:
             return [dict(r) for r in con.execute('SELECT id_transaccion, factura, monto FROM cierre_movimientos WHERE cierre_id=? ORDER BY rowid', (cid,))]
         finally: con.close()
 
+    def ci_cierre(self, cid):
+        """Comunicaciones internas (BNB, BMSC, BISA, UNION, BANECO) del cierre: factura, banco, codigo normalizado, monto."""
+        con = self.con()
+        try:
+            return [dict(r) for r in con.execute('SELECT factura, banco, codigo, monto FROM cierre_ci WHERE cierre_id=? ORDER BY rowid', (cid,))]
+        finally: con.close()
+
     # ---------------- presentacion ----------------
     def presentar(self, bid, est, usuario, nombre):
         from . import pdf
@@ -807,13 +814,24 @@ def conceptos(t):
     ]
 
 
-def tsv_extracto(correlativo, fecha_cierre, movimientos, accion=''):
-    """Filas TSV SIN encabezado para pegar en la hoja del lote (Office Script validar_y_marcar):
-    Accion | Importe | Codigo de asignacion (ID TRANSACCION) | N° factura | Correlativo | Fecha cierre dd/mm/aaaa.
-    Devuelve (texto, n_filas, total). `accion` vacio = marcar; 'LIBERAR' = liberar."""
+def _clave_factura(f):
+    f = str(f or '').strip()
+    return (0, int(f), '') if f.isdigit() else (1, 0, f)
+
+
+def tsv_extracto(correlativo, fecha_cierre, movimientos, accion='', ci=()):
+    """Filas TSV SIN encabezado (10 columnas) para pegar en la hoja TRINIDAD (Office Script validar_y_marcar v2):
+    A Accion | B Importe | C Codigo | D N° factura | E Correlativo | F Fecha cierre dd/mm/aaaa | G,H,I vacias | J Banco.
+    Primero las filas QR (J = 'QR BANECO', A vacia) y luego las comunicaciones internas (A = 'REGISTRAR', J = banco),
+    cada grupo por N° de factura. `accion` = 'LIBERAR' pone esa accion en todas las filas.
+    Devuelve (texto, n_qr, n_ci, total)."""
     fc = fecha(fecha_cierre)
-    filas = [f"{accion}\t{float(m['monto']):.2f}\t{m['id_transaccion']}\t{m['factura']}\t{correlativo}\t{fc}" for m in movimientos]
-    return '\n'.join(filas), len(filas), round(sum(float(m['monto']) for m in movimientos), 2)
+    qr = sorted(movimientos, key=lambda m: _clave_factura(m['factura']))
+    cis = sorted(ci, key=lambda m: _clave_factura(m['factura']))
+    filas = [f"{accion}\t{float(m['monto']):.2f}\t{m['id_transaccion']}\t{m['factura']}\t{correlativo}\t{fc}\t\t\t\tQR BANECO" for m in qr]
+    filas += [f"{accion or 'REGISTRAR'}\t{float(m['monto']):.2f}\t{m['codigo']}\t{m['factura']}\t{correlativo}\t{fc}\t\t\t\t{m['banco']}" for m in cis]
+    total = round(sum(float(m['monto']) for m in qr) + sum(float(m['monto']) for m in cis), 2)
+    return '\n'.join(filas), len(qr), len(cis), total
 
 
 def total_conceptos(lista):

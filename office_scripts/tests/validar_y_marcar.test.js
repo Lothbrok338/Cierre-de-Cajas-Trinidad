@@ -30,7 +30,7 @@ test('todo libre: marca H (factura como texto) e I con el mes sin cero', () => {
     ['', 100, '900000005', '50003', 'CC-2026-00001', '16/10/2026'],     // el código del extracto es numérico
   ]);
   const r = correr(libro(ext, lote));
-  assert.equal(r, 'Lote: 3 filas · ✔ 3 · ✖ 0 · Escrito: sí');
+  assert.ok(String(r).startsWith('Lote: 3 filas · ✔ 3 · ✖ 0 · Extracto: escrito sí'));
   assert.deepEqual(HI(ext, 5), ['50001', 'TRINIDAD - 10']);
   assert.deepEqual(HI(ext, 6), ['50002', 'TRINIDAD - 10']);
   assert.deepEqual(HI(ext, 9), ['50003', 'TRINIDAD - 10']);
@@ -53,7 +53,7 @@ test('mes de la marca: de F; si F vacía, de la fecha de la fila del extracto', 
 test('fecha de cierre como número de serie de Excel', () => {
   const ext = hojaExtracto([{ nro: '900000011', monto: 10 }]);
   const lote = hojaLote([['', 10, '900000011', '1', 'CC', 46311]]);   // 2026-10-16
-  assert.match(correr(libro(ext, lote)), /✔ 1 · ✖ 0 · Escrito: sí/);
+  assert.match(correr(libro(ext, lote)), /✔ 1 · ✖ 0 · Extracto: escrito sí/);
   assert.equal(ext.valorTexto(4, 8), 'TRINIDAD - 10');
 });
 
@@ -65,7 +65,7 @@ test('una fila ocupada: no escribe nada y las válidas quedan "NO MARCADO"', () 
     ['', 820, '900000004', '50002', 'CC', '16/10/2026'],
   ]);
   const r = correr(libro(ext, lote));
-  assert.equal(r, 'Lote: 2 filas · ✔ 1 · ✖ 1 · Escrito: no');
+  assert.ok(String(r).startsWith('Lote: 2 filas · ✔ 1 · ✖ 1 · Extracto: escrito no'));
   assert.equal(JSON.stringify([...ext.celdas]), antes);
   assert.equal(G(lote, 1), '✔ MARCADO — NO MARCADO: hay errores en el lote');
   assert.equal(G(lote, 2), '✖ OCUPADO: H=29/10/2026 | I=VRIS | J=');
@@ -81,7 +81,7 @@ test('ocupado muestra la fecha real de H tal como se ve y J ocupada', () => {
 
 test('no existe en el extracto', () => {
   const ext = extractoBase(); const lote = hojaLote([['', 5, '999999999', '1', 'CC', '16/10/2026']]);
-  assert.equal(correr(libro(ext, lote)), 'Lote: 1 filas · ✔ 0 · ✖ 1 · Escrito: no');
+  assert.ok(String(correr(libro(ext, lote))).startsWith('Lote: 1 filas · ✔ 0 · ✖ 1 · Extracto: escrito no'));
   assert.equal(G(lote, 1), '✖ NO EXISTE EN EXTRACTO');
 });
 
@@ -101,7 +101,7 @@ test('monto distinto (compara numérico, el extracto trae texto)', () => {
 test('repetido dentro del lote', () => {
   const ext = extractoBase();
   const lote = hojaLote([['', 1592, '900000001', '1', 'CC', '16/10/2026'], ['', 1592, '900000001', '2', 'CC', '16/10/2026'], ['', 615, '900000002', '3', 'CC', '16/10/2026']]);
-  assert.equal(correr(libro(ext, lote)), 'Lote: 3 filas · ✔ 1 · ✖ 2 · Escrito: no');
+  assert.ok(String(correr(libro(ext, lote))).startsWith('Lote: 3 filas · ✔ 1 · ✖ 2 · Extracto: escrito no'));
   assert.equal(G(lote, 1), '✖ REPETIDO EN LA LISTA'); assert.equal(G(lote, 2), '✖ REPETIDO EN LA LISTA');
   assert.deepEqual(HI(ext, 6), ['', '']);
 });
@@ -111,12 +111,12 @@ test('idempotencia: re-ejecutar las mismas filas tras limpiar G da YA MARCADO y 
   const fila = () => ['', 1592, '900000001', '50001', 'CC', '16/10/2026'];
   const lote = hojaLote([fila()]);
   const lib = libro(ext, lote);
-  assert.match(correr(lib), /Escrito: sí/);
+  assert.match(correr(lib), /Extracto: escrito sí/);
   for (let c = 6; c <= 8; c++) lote.set(1, c, '');            // el usuario limpia G (y el resto) para reprocesar
   const n = ext.escrituras.length;
   const r = correr(lib);
   assert.equal(G(lote, 1), '✔ YA MARCADO (misma factura)');
-  assert.equal(r, 'Lote: 1 filas · ✔ 1 · ✖ 0 · Escrito: no');
+  assert.ok(String(r).startsWith('Lote: 1 filas · ✔ 1 · ✖ 0 · Extracto: escrito no'));
   assert.deepEqual(HI(ext, 5), ['50001', 'TRINIDAD - 10']);
   // misma fila, otra factura -> ocupada
   const lote2 = hojaLote([['', 1592, '900000001', '50099', 'CC', '16/10/2026']]);
@@ -142,8 +142,8 @@ test('YA MARCADO exige el mismo mes', () => {
 test('LIBERAR correcto: limpia H e I', () => {
   const ext = extractoBase();
   const lote = hojaLote([['LIBERAR', 410, '900000006', '40001', 'CC', '16/10/2026']]);
-  assert.equal(correr(libro(ext, lote)), 'Lote: 1 filas · ✔ 1 · ✖ 0 · Escrito: sí');
-  assert.equal(G(lote, 1), '✔ LIBERADO');
+  assert.ok(String(correr(libro(ext, lote))).startsWith('Lote: 1 filas · ✔ 1 · ✖ 0 · Extracto: escrito sí'));
+  assert.equal(G(lote, 1), '✔ LIBERADO (sin fila en REGISTRO)');
   assert.deepEqual(HI(ext, 10), ['', '']);
 });
 
@@ -151,10 +151,10 @@ test('LIBERAR incorrecto (otra factura, o marca de otra sede/mes): no escribe', 
   const ext = extractoBase({ filas: [{ nro: '900000010', monto: 9, H: '40002', I: 'TRINIDAD - 10' }] });
   const lote = hojaLote([['LIBERAR', 410, '900000006', '49999', 'CC', '16/10/2026'], ['LIBERAR', 820, '900000004', '1', 'CC', '16/10/2026'], ['LIBERAR', 9, '900000010', '40002', 'CC', '16/10/2026']]);
   const r = correr(libro(ext, lote));
-  assert.equal(r, 'Lote: 3 filas · ✔ 1 · ✖ 2 · Escrito: no');
+  assert.ok(String(r).startsWith('Lote: 3 filas · ✔ 1 · ✖ 2 · Extracto: escrito no'));
   assert.equal(G(lote, 1), '✖ NO SE PUEDE LIBERAR: la marca no corresponde a esta factura');
   assert.equal(G(lote, 2), '✖ NO SE PUEDE LIBERAR: la marca no corresponde a esta factura');
-  assert.equal(G(lote, 3), '✔ LIBERADO — NO LIBERADO: hay errores en el lote');
+  assert.equal(G(lote, 3), '✔ LIBERADO (sin fila en REGISTRO) — NO LIBERADO: hay errores en el lote');
   assert.deepEqual(HI(ext, 10), ['40001', 'TRINIDAD - 10']);
   assert.deepEqual(HI(ext, 13), ['40002', 'TRINIDAD - 10']);
 });
@@ -163,7 +163,7 @@ test('mezcla MARCAR/LIBERAR: error general y no escribe', () => {
   const ext = extractoBase(); const antes = JSON.stringify([...ext.celdas]);
   const lote = hojaLote([['MARCAR', 1592, '900000001', '1', 'CC', '16/10/2026'], ['LIBERAR', 410, '900000006', '40001', 'CC', '16/10/2026']]);
   const r = correr(libro(ext, lote));
-  assert.match(r, /Escrito: no · Error general: el lote mezcla MARCAR y LIBERAR/);
+  assert.match(r, /Extracto: escrito no · Registro: \+0 filas · Error general: el lote mezcla LIBERAR con MARCAR\/REGISTRAR/);
   assert.equal(JSON.stringify([...ext.celdas]), antes);
   assert.match(G(lote, 1), /^✖ LOTE MEZCLADO/);
 });
@@ -171,7 +171,7 @@ test('mezcla MARCAR/LIBERAR: error general y no escribe', () => {
 test('solo se procesan filas con G vacío; las ya procesadas no se tocan', () => {
   const ext = extractoBase();
   const lote = hojaLote([['', 1592, '900000001', '1', 'CC', '16/10/2026', '✔ MARCADO'], ['', 615, '900000002', '2', 'CC', '16/10/2026']]);
-  assert.equal(correr(libro(ext, lote)), 'Lote: 1 filas · ✔ 1 · ✖ 0 · Escrito: sí');
+  assert.ok(String(correr(libro(ext, lote))).startsWith('Lote: 1 filas · ✔ 1 · ✖ 0 · Extracto: escrito sí'));
   assert.deepEqual(HI(ext, 5), ['', '']);
   assert.deepEqual(HI(ext, 6), ['2', 'TRINIDAD - 10']);
 });
@@ -179,7 +179,7 @@ test('solo se procesan filas con G vacío; las ya procesadas no se tocan', () =>
 test('fila incompleta (falta factura) es un error del lote', () => {
   const ext = extractoBase();
   const lote = hojaLote([['', 1592, '900000001', '', 'CC', '16/10/2026'], ['', 615, '900000002', '2', 'CC', '16/10/2026']]);
-  assert.match(correr(libro(ext, lote)), /✖ 1 · Escrito: no/);
+  assert.match(correr(libro(ext, lote)), /✖ 1 · Extracto: escrito no/);
   assert.match(G(lote, 1), /^✖ INCOMPLETO/);
 });
 
@@ -204,7 +204,7 @@ test('hoja TRINIDAD inexistente: se crea con encabezados y termina con el mensaj
 test('encabezado del extracto en otra fila y hoja con otro nombre', () => {
   const ext = hojaExtracto([{ nro: '900000001', monto: 1592 }], { encabezadoEnFila: 7, nombre: 'Extracto octubre' });
   const lote = hojaLote([['', 1592, '900000001', '1', 'CC', '16/10/2026']]);
-  assert.match(correr(new Libro([ext, lote])), /✔ 1 · ✖ 0 · Escrito: sí/);
+  assert.match(correr(new Libro([ext, lote])), /✔ 1 · ✖ 0 · Extracto: escrito sí/);
   assert.equal(lote.get(1, 7), 8);                         // fila Excel 8 (encabezado 7)
   assert.deepEqual(HI(ext, 8), ['1', 'TRINIDAD - 10']);
 });
@@ -225,10 +225,10 @@ test('encabezado tolerante a mayúsculas, tildes y espacios', () => {
   const ext = hojaExtracto([{ nro: '900000001', monto: 1592 }]);
   ext.set(3, 0, '  FECHA '); ext.set(3, 2, 'nro   TRANSACCION');
   const lote = hojaLote([['', 1592, '900000001', '1', 'CC', '16/10/2026']]);
-  assert.match(correr(libro(ext, lote)), /Escrito: sí/);
+  assert.match(correr(libro(ext, lote)), /Extracto: escrito sí/);
 });
 
 test('lote vacío', () => {
   const ext = extractoBase(); const lote = hojaLote([]);
-  assert.match(correr(libro(ext, lote)), /^Lote: 0 filas · ✔ 0 · ✖ 0 · Escrito: no/);
+  assert.match(correr(libro(ext, lote)), /^Lote: 0 filas · ✔ 0 · ✖ 0 · Extracto: escrito no/);
 });
