@@ -77,14 +77,14 @@ TRES = [('60002', 'BNB', 'P12345'), ('60003', 'BMSC', 'T98765'), ('60005', 'BISA
 def verificar_plantilla(ruta):
     wb = openpyxl.load_workbook(ruta); assert wb.sheetnames == [PL.HOJA_AYUDA, PL.HOJA]
     ws = wb[PL.HOJA]
-    assert [c.value for c in ws[1]][:3] == ['N° factura', 'Banco', 'Código de asignación'] and ws.max_column == 3
+    assert [c.value for c in ws[1]][:4] == ['N° factura', 'Banco', 'Código de asignación', 'Fecha del depósito'] and ws.max_column == 4
     assert ws['A1'].font.bold and ws['A1'].font.color.rgb.endswith('FFFFFF') and ws['A1'].fill.start_color.rgb.endswith('870B42')
     assert ws.freeze_panes == 'A2'
     for fila in (2, 100, 201):
-        for col in 'ABC': assert ws[f'{col}{fila}'].number_format == '@' and ws[f'{col}{fila}'].value is None
+        for col in 'ABCD': assert ws[f'{col}{fila}'].number_format == '@' and ws[f'{col}{fila}'].value is None
     assert all(c.value is None for r in ws.iter_rows(min_row=2) for c in r)       # sin filas de ejemplo
     dvs = ws.data_validations.dataValidation; assert len(dvs) == 1
-    assert dvs[0].type == 'list' and dvs[0].formula1 == '"BNB,BMSC,BISA,UNION"' and 'B2:B201' in str(dvs[0].sqref)
+    assert dvs[0].type == 'list' and dvs[0].formula1 == '"BNB,BMSC,BISA,UNION,BANECO"' and 'B2:B201' in str(dvs[0].sqref)
     assert len(ws.conditional_formatting) >= 1
     assert 'cliente' in ' '.join(str(r[0].value) for r in wb[PL.HOJA_AYUDA].iter_rows() if r[0].value).lower()
     assert PL.leer(ruta) == []
@@ -117,8 +117,8 @@ def test_lector_tolerante(tmp_path):
     ws.append([None, 20048.0, ' bnb ', 'p123.0']); ws.append([None, None, None, None]); ws.append([None, '20049', 'Unión', 4567.0]); ws.append([None, '   ', None, '  '])
     ws.append([None, 20050, 'bisa', None])
     p = str(tmp_path / 'x.xlsx'); wb.save(p)
-    assert PL.leer(p) == [{'fila': 3, 'factura': '20048', 'banco': 'BNB', 'codigo': 'p123.0'}, {'fila': 5, 'factura': '20049', 'banco': 'UNION', 'codigo': '4567'},
-                          {'fila': 7, 'factura': '20050', 'banco': 'BISA', 'codigo': ''}]
+    assert PL.leer(p) == [{'fila': 3, 'factura': '20048', 'banco': 'BNB', 'codigo': 'p123.0', 'fecha_deposito': ''}, {'fila': 5, 'factura': '20049', 'banco': 'UNION', 'codigo': '4567', 'fecha_deposito': ''},
+                          {'fila': 7, 'factura': '20050', 'banco': 'BISA', 'codigo': '', 'fecha_deposito': ''}]
     wb2 = openpyxl.Workbook(); wb2.active.append(['otra', 'cosa']); p2 = str(tmp_path / 'y.xlsx'); wb2.save(p2)     # primera hoja si no existe la de C.I.; sin encabezados -> error
     with pytest.raises(ValueError, match='encabezados'): PL.leer(p2)
     (tmp_path / 'z.xlsx').write_bytes(b'no es excel')
@@ -377,7 +377,7 @@ def test_migracion_v5_idempotente(tmp_path):
     con = sqlite3.connect(ruta); con.execute('ALTER TABLE cierres DROP COLUMN sha256_plantilla'); con.execute('PRAGMA user_version = 4'); con.commit(); con.close()
     for _ in range(2):
         dbm.inicializar(ruta); con = sqlite3.connect(ruta)
-        assert 'sha256_plantilla' in {r[1] for r in con.execute('PRAGMA table_info(cierres)')} and con.execute('PRAGMA user_version').fetchone()[0] == 5 == dbm.VERSION_ESQUEMA; con.close()
+        assert 'sha256_plantilla' in {r[1] for r in con.execute('PRAGMA table_info(cierres)')} and con.execute('PRAGMA user_version').fetchone()[0] == 6 == dbm.VERSION_ESQUEMA; con.close()
 
 
 # ---------- datos reales ----------

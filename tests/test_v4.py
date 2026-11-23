@@ -190,7 +190,7 @@ def test_migracion_v3_a_v4_con_filas(tmp_path, monkeypatch):
     con = sqlite3.connect(ruta)
     con.execute("INSERT INTO cierres (correlativo, fecha_cierre, usuario, nombre, caja, qr_registrado, qr_conciliado, tarjeta_declarada, tarjeta_sistema, total_cierre, "
                 "estado_revision, version, presentado_en, ruta) VALUES ('CC-2026-00001','2026-10-15','ana','Ana Prueba','SFC1',1000,1000,100,100,1100,'CONFORME',1,'2026-10-15 17:00:00','cierres/x/v1')")
-    con.execute("INSERT INTO cierre_ci VALUES (1,'30003','BNB','ABC-1',700)")
+    con.execute("INSERT INTO cierre_ci (cierre_id, factura, banco, codigo, monto) VALUES (1,'30003','BNB','ABC-1',700)")
     con.execute("INSERT INTO auditoria (momento, usuario, accion, detalle_json) VALUES ('2026-10-15 17:00:00','ana','presentar_cierre','{}')")
     con.execute('DROP TABLE alertas_cierre'); con.execute('PRAGMA user_version = 3'); con.commit(); con.close()
     monkeypatch.setenv('DATA_DIR', str(data)); monkeypatch.setenv('APP_USERS', json.dumps(USUARIOS))
@@ -198,7 +198,7 @@ def test_migracion_v3_a_v4_con_filas(tmp_path, monkeypatch):
     from app.main import create_app
     for _ in range(2):      # idempotente
         app = create_app(); con = sqlite3.connect(ruta)
-        assert con.execute('PRAGMA user_version').fetchone()[0] == 5
+        assert con.execute('PRAGMA user_version').fetchone()[0] == 6
         cols = [r[1] for r in con.execute('PRAGMA table_info(alertas_cierre)')]
         assert cols[:8] == ['id', 'cierre_id', 'tipo', 'factura', 'banco', 'codigo', 'detalle', 'creado_en'] and 'revisada_por' in cols and 'revisada_en' in cols
         assert con.execute('select correlativo, estado_revision from cierres').fetchall() == [('CC-2026-00001', 'CONFORME')]

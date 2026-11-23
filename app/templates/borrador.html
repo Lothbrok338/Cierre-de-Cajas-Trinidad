@@ -54,10 +54,10 @@
 {% if alertas_fmt %}
 <section class="alertas-rev" role="alert" aria-label="Alertas de revisión">
   <h2>⚠ Alertas de revisión ({{ alertas_fmt | length }})</h2>
-  <p>Estos códigos de asignación no cumplen el formato esperado del banco. Se registraron igual y <strong>no impiden presentar</strong>, pero Ingresos será notificado. Verifique que los haya escrito bien.</p>
+  <p>Estos registros tienen un código que no cumple el formato esperado del banco o una fecha de depósito faltante o dudosa. Se registraron igual y <strong>no impiden presentar</strong>, pero Ingresos será notificado. Verifique que los haya escrito bien.</p>
   <div class="tabla-wrap"><table class="tabla">
-    <thead><tr><th>N° factura</th><th>Banco</th><th>Código</th><th>Regla esperada</th></tr></thead>
-    <tbody>{% for a in alertas_fmt %}<tr><td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Regla esperada">{{ a.detalle }}</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>N° factura</th><th>Banco</th><th>Código</th><th>Motivo</th></tr></thead>
+    <tbody>{% for a in alertas_fmt %}<tr><td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Motivo">{{ a.detalle }}</td></tr>{% endfor %}</tbody>
   </table></div>
 </section>
 {% endif %}
@@ -134,10 +134,11 @@
         {{ celdas_base(f) }}
         <td data-l="Estado">
           {% if f.estado == 'CONCILIADA' %}<span class="insignia ins-verde">CONCILIADA</span>
-          {% elif f.estado == 'COMUNICACIÓN INTERNA' %}<span class="insignia ins-guinda">Comunicación interna — {{ f.ci.banco }} {{ f.ci.codigo }}</span>{% if f.desde_plantilla %} <small class="desde-pl">(desde plantilla)</small>{% endif %}
+          {% elif f.estado == 'COMUNICACIÓN INTERNA' %}<span class="insignia ins-guinda">Comunicación interna — {{ f.ci.banco }} {{ f.ci.codigo }}</span>{% if f.desde_plantilla %} <small class="desde-pl">(desde plantilla)</small>{% endif %}{% if f.ci.fecha_deposito %}<br><small>Fecha del depósito: {{ f.ci.fecha_deposito }}</small>{% endif %}
           {% elif f.manual %}<span class="insignia ins-guinda">Respaldo manual</span>
           {% else %}<span class="insignia ins-guinda">Confirmada por cajero</span>{% endif %}
           {% if f.alerta_fmt %}<span class="alerta-fmt">⚠ <strong>FORMATO A REVISAR</strong>: {{ f.alerta_fmt.detalle }}</span>{% endif %}
+          {% if f.alerta_fecha %}<span class="alerta-fmt">⚠ <strong>FECHA DEL DEPÓSITO</strong>: {{ f.alerta_fecha.detalle }}</span>{% endif %}
         </td>
         <td data-l="Respaldo">
           {% if f.estado == 'COMUNICACIÓN INTERNA' %}<span class="tenue-t">Depósito a otra cuenta, prevalidado por Ingresos (sin cruce bancario)</span>
@@ -201,12 +202,18 @@
               <label for="banco-{{ f.nf }}">Banco</label>
               <select id="banco-{{ f.nf }}" name="banco" required>
                 <option value="">Seleccione…</option>
-                {% for b in BANCOS %}{% if not (b == BANCO_QR and f.estado == 'POR CONFIRMAR') %}<option value="{{ b }}">{{ b }}</option>{% endif %}{% endfor %}
+                {% for b, etq in BANCOS_UI %}{% if not (b == BANCO_QR and f.estado == 'POR CONFIRMAR') %}<option value="{{ b }}">{{ etq }}</option>{% endif %}{% endfor %}
               </select>
               <label for="codigo-{{ f.nf }}">Código de asignación</label>
               <input id="codigo-{{ f.nf }}" name="codigo" type="text" maxlength="40" required autocomplete="off">
+              <div class="campo-fecha-deposito">
+                <label for="fecha-{{ f.nf }}">Fecha del depósito <small>(opcional; recomendada para BANECO)</small></label>
+                <input id="fecha-{{ f.nf }}" name="fecha_deposito" type="text" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" autocomplete="off">
+              </div>
               <p class="ayuda">Formato esperado: {% for b in BANCOS %}<br>· {{ REGLAS[b] }}{% endfor %}<br>Si no cumple, se registra igual y se genera una alerta de revisión para Ingresos.</p>
-              <p class="ayuda">QR BANECO: el ID de transacción del reporte QR cargado (mismo monto y fecha). Otro banco: la factura pasa a <em>Comunicación interna</em> (depósito a otra cuenta, prevalidado por Ingresos).</p>
+              <p class="ayuda"><strong>QR BANECO</strong>: pago del día; su ID de transacción está en el reporte QR cargado (mismo monto y fecha).<br>
+                <strong>BANECO</strong>: depósito hecho a BANECO en una fecha anterior, que <em>no</em> está en el reporte QR; pasa a <em>Comunicación interna</em>.<br>
+                Otro banco: también pasa a <em>Comunicación interna</em> (depósito a otra cuenta, prevalidado por Ingresos).</p>
               <button class="btn btn-prim btn-sm" type="submit">Registrar respaldo</button>
             </form>
           </details>

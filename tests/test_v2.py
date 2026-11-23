@@ -43,7 +43,7 @@ def sint_extra(tmp_path):
 
 # ---------- catálogo ----------
 def test_catalogo_bancos_y_formato():
-    assert catalogo.LISTA_BANCOS == ['QR BANECO', 'BNB', 'BMSC', 'BISA', 'UNION']
+    assert catalogo.LISTA_BANCOS == ['QR BANECO', 'BNB', 'BMSC', 'BISA', 'UNION', 'BANECO']
     assert (catalogo.BANCOS['BNB']['cuenta_bancaria'], catalogo.BANCOS['BNB']['cuenta_sap']) == ('8000006425', '110103222')
     assert (catalogo.BANCOS['BMSC']['cuenta_bancaria'], catalogo.BANCOS['BMSC']['cuenta_sap']) == ('4010884831', '110103242')
     assert (catalogo.BANCOS['BISA']['cuenta_bancaria'], catalogo.BANCOS['BISA']['cuenta_sap']) == ('696870021', '110103232')
@@ -76,7 +76,7 @@ def test_motor_reclasificacion_ci(sint):
     assert t['Total cierre'] == t['QR registrado'] + t['C.I. según sistema'] + t['Tarjeta declarada'] == 1700
     f = r['facturas'].set_index('Número Factura')
     assert f.loc['30003', 'estado_conciliacion'] == 'COMUNICACIÓN INTERNA' and f.loc['30003', 'Tipo (motor)'] == 'C.I.' and f.loc['30003', 'ID TRANSACCION'] == ''
-    assert r['ci'] == [{'factura': '30003', 'razon_social': 'EMPRESA ALFA SRL', 'estudiante': 'SOTO VEGA CARLOS', 'monto': 700.0, 'banco': 'BNB', 'codigo': 'DEP-1'}]
+    assert r['ci'] == [{'factura': '30003', 'razon_social': 'EMPRESA ALFA SRL', 'estudiante': 'SOTO VEGA CARLOS', 'monto': 700.0, 'banco': 'BNB', 'codigo': 'DEP-1', 'fecha_deposito': ''}]
     # el movimiento que antes estaba sugerido para 30003 queda libre (ajeno), ya no asignado
     assert (r['banco'].set_index('ID TRANSACCION').loc['700000003', 'estado_banco']) == 'AJENO / NO CORRESPONDE AL CAJERO'
     # reclasificar algo que no es QR válido no se aplica

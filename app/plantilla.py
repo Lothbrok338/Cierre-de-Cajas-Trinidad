@@ -1,10 +1,12 @@
 """Plantilla Excel de comunicaciones internas (depositos a otros bancos): generacion y lectura tolerante.
 
-El cajero anota durante el dia, una fila por factura: N° factura | Banco | Codigo de asignacion, y la sube al final del dia.
-El importe, el cliente y la fecha NUNCA se digitan: salen del movimiento del sistema de facturacion.
+El cajero anota durante el dia, una fila por factura: N° factura | Banco | Codigo de asignacion | Fecha del deposito (opcional), y la sube al final del dia.
+El importe y el cliente NUNCA se digitan: salen del movimiento del sistema de facturacion. La fecha del deposito solo se anota cuando se conoce
+(recomendada para BANECO: deposito de fecha anterior); las plantillas antiguas sin esa columna se siguen leyendo.
 Este modulo solo conoce el archivo (no la base ni el motor); las validaciones de negocio estan en servicio.Almacen.aplicar_plantilla."""
 import os, re, unicodedata
 import openpyxl
+from openpyxl.comments import Comment
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -14,8 +16,9 @@ from . import catalogo
 
 HOJA = 'COMUNICACIONES INTERNAS'
 HOJA_AYUDA = 'INSTRUCCIONES'
-ENCABEZADOS = ['N° factura', 'Banco', 'Código de asignación']
-BANCOS_PLANTILLA = [b for b in catalogo.LISTA_BANCOS if not catalogo.es_qr(b)]    # BNB, BMSC, BISA, UNION
+ENCABEZADOS = ['N° factura', 'Banco', 'Código de asignación', 'Fecha del depósito']    # la cuarta es opcional
+ENCABEZADOS_OBLIGATORIOS = 3
+BANCOS_PLANTILLA = [b for b in catalogo.LISTA_BANCOS if not catalogo.es_qr(b)]    # BNB, BMSC, BISA, UNION, BANECO
 FILAS_PLANTILLA = 200                    # filas 2..201 con formato de texto
 MAX_FILAS_LEIDAS = 2000                  # tope de filas con datos al importar
 NOMBRE_DESCARGA = 'Plantilla_Comunicaciones_Internas.xlsx'
@@ -26,27 +29,34 @@ ALFANUM = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
 INSTRUCCIONES = [
     ('Plantilla de comunicaciones internas (depósitos a otros bancos)', 'titulo'),
-    ('Use esta plantilla para anotar, durante el día, las facturas que el cliente pagó con un depósito a OTRO banco (BNB, BMSC, BISA o UNION). '
+    ('Use esta plantilla para anotar, durante el día, las facturas que el cliente pagó con un depósito a OTRO banco (BNB, BMSC, BISA, UNION o BANECO). '
      'Al final del día la sube junto con el movimiento del cajero y el reporte QR BANECO, y el sistema reclasifica esas facturas automáticamente como «Comunicación interna».', 'texto'),
     ('Paso a paso', 'sub'),
-    ('1. Cuándo anotar una factura: cada vez que cobre con un depósito hecho a otro banco que no sea QR BANECO y que le entreguen un código de asignación (comprobante o comunicación interna).', 'texto'),
+    ('1. Cuándo anotar una factura: cada vez que cobre con un depósito hecho a otro banco (o un depósito BANECO de fecha anterior, ver más abajo) y que le entreguen un código de asignación (comprobante o comunicación interna).', 'texto'),
     ('2. Abra la hoja «COMUNICACIONES INTERNAS» (pestaña de abajo) y escriba UNA factura por fila, empezando en la fila 2 (debajo de los títulos).', 'texto'),
     ('3. Columna «N° factura»: el número de la factura tal como sale en el sistema de facturación. Solo el número.', 'texto'),
-    ('4. Columna «Banco»: elija de la lista (BNB, BMSC, BISA o UNION). Use el desplegable de la celda; no escriba otros nombres.', 'texto'),
+    ('4. Columna «Banco»: elija de la lista (BNB, BMSC, BISA, UNION o BANECO). Use el desplegable de la celda; no escriba otros nombres.', 'texto'),
     ('5. Columna «Código de asignación»: el código del depósito, tal como figura en el comprobante. Las celdas están en formato texto: no pierde ceros ni letras.', 'texto'),
-    ('6. Al final del día guarde el archivo como .xlsx (Excel: Archivo > Guardar como > Libro de Excel). No use .xls, .csv ni PDF.', 'texto'),
-    ('7. En el sistema, en «Nuevo cierre», suba los TRES archivos juntos: movimiento del cajero, reporte QR BANECO y esta plantilla.', 'texto'),
+    ('6. Columna «Fecha del depósito» (OPCIONAL): la fecha en que el cliente hizo el depósito, en formato dd/mm/aaaa (ejemplo: 05/09/2026). Es recomendada para BANECO; en los demás bancos puede dejarla vacía.', 'texto'),
+    ('7. Al final del día guarde el archivo como .xlsx (Excel: Archivo > Guardar como > Libro de Excel). No use .xls, .csv ni PDF.', 'texto'),
+    ('8. En el sistema, en «Nuevo cierre», suba los TRES archivos juntos: movimiento del cajero, reporte QR BANECO y esta plantilla.', 'texto'),
     ('Formato del código por banco (los ejemplos son inventados)', 'sub'),
     ('BNB: letras y números, debe incluir una P.  Ejemplo: P12345 o 7P2T91', 'ejemplo'),
     ('BMSC: letras y números, debe incluir una T.  Ejemplo: T98765 o 4T0B12', 'ejemplo'),
     ('BISA: solo números.  Ejemplo: 4567890', 'ejemplo'),
     ('UNION: solo números.  Ejemplo: 1234567', 'ejemplo'),
+    ('BANECO: solo números (número de transacción del banco).  Ejemplo: 9876543', 'ejemplo'),
     ('Si un código no cumple su formato, la celda se pinta de ámbar. No es un error que impida presentar: revise que lo escribió bien; si es correcto, déjelo así y Ingresos lo verá como alerta de revisión.', 'texto'),
+    ('BANECO (depósito de fecha anterior) y QR BANECO (pago del día) NO son lo mismo', 'sub'),
+    ('• Los pagos QR BANECO del día se respaldan solos con el reporte QR que sube en «Nuevo cierre»: NO los anote en esta plantilla.', 'texto'),
+    ('• Use «BANECO» SOLO para un depósito que el cliente hizo a la cuenta BANECO en una fecha anterior y que NO aparece en el reporte QR del día. El código es el número de transacción del banco (solo números).', 'texto'),
+    ('• Si el número de transacción SÍ aparece en el reporte QR de ese día, el sistema no lo acepta aquí: esa factura se respalda sola como QR BANECO. Tampoco se acepta un número que ya se usó en otro cierre.', 'texto'),
+    ('• Para BANECO conviene anotar la «Fecha del depósito»: Ingresos la necesita para ubicarlo en el extracto del mes correcto. Si falta, la fecha no es válida o es posterior a la fecha del cierre, el sistema lo registra igual pero genera una alerta para Ingresos.', 'texto'),
     ('Importante', 'sub'),
-    ('• NO anote facturas de QR BANECO ni de tarjeta. Solo depósitos a otros bancos.', 'texto'),
+    ('• NO anote facturas de QR BANECO del día ni de tarjeta. Solo depósitos a otros bancos (y BANECO de fecha anterior).', 'texto'),
     ('• Una factura por fila. No repita la misma factura ni el mismo código del mismo banco.', 'texto'),
     ('• No borre, mueva ni cambie los títulos de la fila 1, ni el nombre de las hojas.', 'texto'),
-    ('• No escriba importe, cliente ni fecha: el importe, el cliente y la fecha se toman del movimiento de Univalle (sistema de facturación). No se digitan.', 'texto'),
+    ('• No escriba importe, cliente ni fecha de la factura: el importe, el cliente y la fecha de la factura se toman del movimiento de Univalle (sistema de facturación). Solo la «Fecha del depósito» (opcional) se escribe a mano.', 'texto'),
     ('• Las filas vacías se ignoran. Si una fila tiene un problema (factura que no existe, anulada, código repetido, etc.), el sistema le mostrará cuál y por qué; las demás filas sí se aplican. '
      'Puede corregir el Excel y volver a subirlo con «Reemplazar plantilla», o resolver esa factura a mano en la pantalla de revisión.', 'texto'),
 ]
@@ -61,7 +71,7 @@ def _formula_formato(fila=2):
     return {
         'BNB': f'AND({b}="BNB",{c}<>"",OR(ISERROR(FIND("P",UPPER({c}))),{cuerpo}))',
         'BMSC': f'AND({b}="BMSC",{c}<>"",OR(ISERROR(FIND("T",UPPER({c}))),{cuerpo}))',
-        'NUMERICO': f'AND(OR({b}="BISA",{b}="UNION"),{c}<>"",{digitos})',
+        'NUMERICO': f'AND(OR({b}="BISA",{b}="UNION",{b}="BANECO"),{c}<>"",{digitos})',
     }
 
 
@@ -78,14 +88,15 @@ def generar_plantilla(ruta):
         c.font = Font(bold=True, color='FFFFFF', size=12); c.fill = relleno
         c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
     ws.row_dimensions[1].height = 28
-    for col, ancho in zip('ABC', (20, 14, 30)): ws.column_dimensions[col].width = ancho
+    for col, ancho in zip('ABCD', (20, 14, 30, 22)): ws.column_dimensions[col].width = ancho
+    ws['D1'].comment = Comment('OPCIONAL. Fecha del depósito en formato dd/mm/aaaa (ejemplo: 05/09/2026). Recomendada para BANECO (depósito de fecha anterior).', 'Sistema'); ws['D1'].comment.width = 300; ws['D1'].comment.height = 80
     ws.freeze_panes = 'A2'
     ultima = FILAS_PLANTILLA + 1
     for fila in range(2, ultima + 1):
-        for col in (1, 2, 3):
+        for col in (1, 2, 3, 4):
             c = ws.cell(row=fila, column=col); c.number_format = '@'; c.alignment = Alignment(horizontal='left')
     dv = DataValidation(type='list', formula1='"' + ','.join(BANCOS_PLANTILLA) + '"', allow_blank=True, showErrorMessage=True, showInputMessage=True,
-                        errorStyle='stop', errorTitle='Banco no válido', error='Elija BNB, BMSC, BISA o UNION de la lista.',
+                        errorStyle='stop', errorTitle='Banco no válido', error='Elija BNB, BMSC, BISA, UNION o BANECO de la lista.',
                         promptTitle='Banco', prompt='Elija el banco de la lista.')
     dv.add(f'B2:B{ultima}'); ws.add_data_validation(dv)
     ambar = PatternFill('solid', start_color='FFD966', end_color='FFD966', bgColor='FFD966')
@@ -125,6 +136,7 @@ _ALIAS = {
     'banco': {'banco'},
     'codigo': {'codigodeasignacion', 'codigoasignacion', 'codigo', 'codasignacion', 'codigodeasignacion'},
 }
+_ALIAS_OPCIONAL = {'fecha_deposito': {'fechadeldeposito', 'fechadeposito', 'fechadedeposito', 'fecha'}}
 
 
 def texto_celda(v):
@@ -147,7 +159,7 @@ def banco_norm(v):
 
 
 def leer(ruta):
-    """Lee la plantilla. Devuelve una lista de dicts {fila, factura, banco, codigo} (fila = numero de fila de Excel) para las filas con algun dato.
+    """Lee la plantilla. Devuelve una lista de dicts {fila, factura, banco, codigo, fecha_deposito} (fila = numero de fila de Excel) para las filas con algun dato.
     Lanza ValueError con un mensaje claro si el archivo no es una plantilla legible."""
     try: wb = openpyxl.load_workbook(ruta, data_only=True)
     except Exception: raise ValueError('El archivo no es una plantilla de comunicaciones internas válida (.xlsx). Descargue la plantilla desde «Nuevo cierre».')
@@ -160,11 +172,14 @@ def leer(ruta):
                 if n > 30: break
                 celdas = [_norm(x) for x in row]
                 hallados = {k: next((i for i, c in enumerate(celdas) if c in al), None) for k, al in _ALIAS.items()}
-                if all(v is not None for v in hallados.values()): cab = n; pos = hallados
+                if all(v is not None for v in hallados.values()):
+                    cab = n; pos = hallados
+                    pos['fecha_deposito'] = next((i for i, c in enumerate(celdas) if c in _ALIAS_OPCIONAL['fecha_deposito']), None)
                 continue
-            def g(k): return row[pos[k]] if pos[k] < len(row) else None
-            d = {'fila': n, 'factura': texto_celda(g('factura')), 'banco': banco_norm(g('banco')), 'codigo': texto_celda(g('codigo'))}
-            if not (d['factura'] or d['banco'] or d['codigo']): continue
+            def g(k): return row[pos[k]] if pos[k] is not None and pos[k] < len(row) else None
+            d = {'fila': n, 'factura': texto_celda(g('factura')), 'banco': banco_norm(g('banco')), 'codigo': texto_celda(g('codigo')),
+                 'fecha_deposito': texto_celda(g('fecha_deposito'))}
+            if not (d['factura'] or d['banco'] or d['codigo']): continue    # una fila solo con fecha no es una fila de datos
             filas.append(d)
             if len(filas) > MAX_FILAS_LEIDAS: raise ValueError(f'La plantilla tiene más de {MAX_FILAS_LEIDAS} filas con datos; revise que sea el archivo correcto.')
     finally: wb.close()

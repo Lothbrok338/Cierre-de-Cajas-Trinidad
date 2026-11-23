@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS cierre_movimientos (
 CREATE INDEX IF NOT EXISTS ix_cm_id ON cierre_movimientos(id_transaccion);
 CREATE TABLE IF NOT EXISTS cierre_ci (
   cierre_id INTEGER NOT NULL REFERENCES cierres(id),
-  factura TEXT, banco TEXT NOT NULL, codigo TEXT NOT NULL, monto REAL
+  factura TEXT, banco TEXT NOT NULL, codigo TEXT NOT NULL, monto REAL, fecha_deposito TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_ci_bc ON cierre_ci(banco, codigo);
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -80,8 +80,9 @@ MIGRACIONES = [
     ('cierres', 'revisado_en', 'TEXT'),
     ('cierres', 'observacion_revision', 'TEXT'),
     ('cierres', 'sha256_plantilla', 'TEXT'),   # v5: huella de la plantilla de comunicaciones internas (NULL si no se cargo)
+    ('cierre_ci', 'fecha_deposito', 'TEXT'),   # v6: fecha del deposito de la C.I. (dd/mm/aaaa, opcional)
 ]
-VERSION_ESQUEMA = 5   # v4: tabla alertas_cierre (alertas de formato); v5: cierres.sha256_plantilla
+VERSION_ESQUEMA = 6   # v4: tabla alertas_cierre (alertas de formato); v5: cierres.sha256_plantilla; v6: cierre_ci.fecha_deposito
 
 
 def migrar(con):

@@ -59,7 +59,7 @@ def generar(res, info, ruta):
                             title=f"Comprobante de cierre de caja {info['correlativo']}", author='UNIVALLE')
     S = []
     alertas = info.get('alertas_formato') or []
-    marcadas = {(a['factura'], a['banco']) for a in alertas}
+    marcadas = {(a['factura'], a['banco'], a.get('tipo', 'FORMATO')) for a in alertas}
     if os.path.isfile(LOGO):
         S.append(Image(LOGO, width=52 * mm, height=52 * mm * 134 / 526, hAlign='LEFT')); S.append(Spacer(1, 3))
     else: S.append(_p('UNIVALLE', H1))
@@ -136,7 +136,7 @@ def generar(res, info, ruta):
     filas = [[_p(h, CB) for h in ('N° factura', 'Cliente', 'Monto (Bs)', 'ID TRANSACCION', 'Titular banco', 'Estado')]]
     est = [('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO), ('VALIGN', (0, 0), (-1, -1), 'TOP')]
     for i, (_, r) in enumerate(qr.iterrows(), start=1):
-        idc = _pa(r['ID TRANSACCION'], C) if (str(r['Número Factura']), 'QR BANECO') in marcadas else _p(r['ID TRANSACCION'] or '—', C)
+        idc = _pa(r['ID TRANSACCION'], C) if (str(r['Número Factura']), 'QR BANECO', 'FORMATO') in marcadas else _p(r['ID TRANSACCION'] or '—', C)
         filas.append([_p(r['Número Factura'], C), _p(r['Razon Social'], C), _p(bs(r['Monto']), ParagraphStyle('r', parent=C, alignment=TA_RIGHT)),
                       idc, _p(r['TITULAR ORIGEN'] or '—', C), _p(r['estado_conciliacion'], C)])
         if r['estado_conciliacion'] == 'CONFIRMADA POR CAJERO': est.append(('BACKGROUND', (0, i), (-1, i), AMBAR))
@@ -155,17 +155,23 @@ def generar(res, info, ruta):
         for n in notas: S.append(_p(n['texto'], C))
     if res.get('ci'):
         S.append(_p('Comunicaciones internas (depósitos a otras cuentas, prevalidados por Ingresos)', H2))
-        fi = [[_p(h, CB) for h in ('N° factura', 'Cliente', 'Monto (Bs)', 'Banco', 'Código de asignación')]]
-        for r in res['ci']: fi.append([_p(r['factura'], C), _p(r['razon_social'], C), _p(bs(r['monto']), ParagraphStyle('r2', parent=C, alignment=TA_RIGHT)), _p(r['banco'], C),
-                                _pa(r['codigo'], C) if (str(r['factura']), r['banco']) in marcadas else _p(r['codigo'], C)])
-        x = Table(fi, colWidths=[22 * mm, 66 * mm, 24 * mm, 22 * mm, 40 * mm], repeatRows=1)
+        con_fecha = any(r.get('fecha_deposito') or r['banco'] == 'BANECO' for r in res['ci'])    # columna solo si hay alguna fecha o un BANECO
+        fi = [[_p(h, CB) for h in ('N° factura', 'Cliente', 'Monto (Bs)', 'Banco', 'Código de asignación') + (('Fecha depósito',) if con_fecha else ())]]
+        for r in res['ci']:
+            fila = [_p(r['factura'], C), _p(r['razon_social'], C), _p(bs(r['monto']), ParagraphStyle('r2', parent=C, alignment=TA_RIGHT)), _p(r['banco'], C),
+                    _pa(r['codigo'], C) if (str(r['factura']), r['banco'], 'FORMATO') in marcadas else _p(r['codigo'], C)]
+            if con_fecha:
+                fd = r.get('fecha_deposito') or '—'
+                fila.append(_pa(fd, C) if (str(r['factura']), r['banco'], 'FECHA DEPÓSITO') in marcadas else _p(fd, C))
+            fi.append(fila)
+        x = Table(fi, colWidths=[20 * mm, 52 * mm, 22 * mm, 20 * mm, 34 * mm, 26 * mm] if con_fecha else [22 * mm, 66 * mm, 24 * mm, 22 * mm, 40 * mm], repeatRows=1)
         x.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO)])); S.append(x)
         desde = [str(r['factura']) for r in res['ci'] if str(r['factura']) in set(map(str, info.get('plantilla_origen') or []))]
         if desde: S.append(_p('Cargadas desde la plantilla de comunicaciones internas: facturas ' + ', '.join(desde) + '.', NOTA))
     if alertas:
-        S.append(_p('Alertas de revisión: formato del código de asignación', H2))
-        S.append(_p('Estos códigos se registraron igual, pero no cumplen el formato esperado del banco; Ingresos debe revisarlos.', NOTA))
-        fl = [[_p(h, CB) for h in ('N° factura', 'Banco', 'Código', 'Regla esperada')]]
+        S.append(_p('Alertas de revisión: código de asignación y fecha del depósito', H2))
+        S.append(_p('Estos registros se guardaron igual, pero el código no cumple el formato esperado del banco o la fecha del depósito falta o es dudosa; Ingresos debe revisarlos.', NOTA))
+        fl = [[_p(h, CB) for h in ('N° factura', 'Banco', 'Código', 'Motivo')]]
         for a in alertas: fl.append([_p(a['factura'], C), _p(a['banco'], C), _pa(a['codigo'], C), _p(a['detalle'], C)])
         x = Table(fl, colWidths=[22 * mm, 24 * mm, 46 * mm, 82 * mm], repeatRows=1)
         x.setStyle(TableStyle([('BOX', (0, 0), (-1, -1), 0.5, LINEA), ('INNERGRID', (0, 0), (-1, -1), 0.25, LINEA), ('BACKGROUND', (0, 0), (-1, 0), FONDO),

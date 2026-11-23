@@ -36,7 +36,7 @@ def create_app():
     T = Jinja2Templates(directory=os.path.join(AQUI, 'templates'))
     T.env.filters.update(bs=formato.bs, fecha=formato.fecha, fecha_hora=formato.fecha_hora, hora=formato.hora)
     T.env.filters['rol_txt'] = lambda r: {'superadmin': 'Superadmin', 'ingresos': 'Ingresos', 'cajero': 'Cajero'}.get(r, r)
-    T.env.globals.update(ROLES=auth.ROLES, MIN_CLAVE=auth.MIN_CLAVE, ESTADOS=servicio.ESTADOS_REVISION, BANCOS=catalogo.LISTA_BANCOS, BANCO_QR=catalogo.BANCO_QR, REGLAS={b: catalogo.regla_formato(b) for b in catalogo.LISTA_BANCOS}, MIN_OBS=servicio.MIN_OBSERVACION)
+    T.env.globals.update(ROLES=auth.ROLES, MIN_CLAVE=auth.MIN_CLAVE, ESTADOS=servicio.ESTADOS_REVISION, BANCOS=catalogo.LISTA_BANCOS, BANCOS_UI=[(b, catalogo.etiqueta(b)) for b in catalogo.LISTA_BANCOS], BANCO_QR=catalogo.BANCO_QR, REGLAS={b: catalogo.regla_formato(b) for b in catalogo.LISTA_BANCOS}, MIN_OBS=servicio.MIN_OBSERVACION)
     def nombre_completo(login):
         """Nombre completo del usuario (tabla usuarios) para mostrar en pantalla; si ya no existe, el usuario tal cual."""
         if not login: return login
@@ -224,15 +224,17 @@ def create_app():
             conf = alm.conflictos_para(res, usr['usuario'])
             if conf:
                 c = conf[0]; ev['presentable'] = False; ev['nivel'] = 'rojo'
-                ev['razones'].append(f"La factura {c['factura']} usa el número de transacción {c['id_transaccion']}, que ya está en el cierre {c['correlativo']} (cajero {c['usuario']}).")
+                ev['razones'].append(f"La factura {c['factura']}: " + servicio.msg_qr_usado(c['id_transaccion'], c))
             for c in alm.conflictos_ci_para(res, usr['usuario']):
                 ev['presentable'] = False; ev['nivel'] = 'rojo'
-                ev['razones'].append(f"La comunicación interna de la factura {c['factura']} ({c['banco']} {c['codigo']}) ya está en el cierre {c['correlativo']} (cajero {c['usuario']}).")
+                ev['razones'].append(f"La comunicación interna de la factura {c['factura']} ({c['banco']} {c['codigo']}): "
+                                     + servicio.msg_ci_usada(c['banco'], catalogo.normalizar_codigo(c['codigo']), c))
             bloqueo = servicio.regla_vigente(alm.vigente(str(fc), usr['usuario']), est.get('origen'), str(fc))
             if bloqueo: ev['presentable'] = False; ev['nivel'] = 'rojo'; ev['razones'].append(bloqueo)
         f = res['facturas']; b = res['banco']; qr = f[f['Tipo (motor)'].isin(['QR', 'C.I.'])]
         ci = {r['factura']: r for r in res.get('ci', [])}
-        af = servicio.alertas_formato(res, est); af_por_nf = {a['factura']: a for a in af}
+        af = servicio.alertas_revision(res, est)
+        af_por_nf = {a['factura']: a for a in af if a['tipo'] == servicio.TIPO_FORMATO}; ad_por_nf = {a['factura']: a for a in af if a['tipo'] == catalogo.TIPO_FECHA}
         desde_pl = set(est.get('plantilla_origen') or [])
         pl = est.get('plantilla'); pl_vista = None
         if pl:
@@ -247,7 +249,7 @@ def create_app():
             obs = e in servicio.OBSERVADAS
             filas.append({'nf': nf, 'cliente': r['Razon Social'], 'estudiante': r['Nombre Estudiante'], 'monto': r['Monto'], 'hora': r['hora_factura'],
                           'estado': e, 'nivel': nivel, 'id': r['ID TRANSACCION'], 'titular': r['TITULAR ORIGEN'], 'hora_banco': r['hora_banco'],
-                          'observada': obs, 'manual': nivel == 'RESPALDO MANUAL', 'ci': ci.get(nf), 'alerta_fmt': af_por_nf.get(str(nf)),
+                          'observada': obs, 'manual': nivel == 'RESPALDO MANUAL', 'ci': ci.get(nf), 'alerta_fmt': af_por_nf.get(str(nf)), 'alerta_fecha': ad_por_nf.get(str(nf)),
                           'deshacer': e == 'CONFIRMADA POR CAJERO' or e == 'COMUNICACIÓN INTERNA', 'desde_plantilla': str(nf) in desde_pl,
                           'candidatos': servicio.candidatos(res, nf) if e in ('SIN RESPALDO', 'AMBIGUO') else [],
                           'descartes': desc_por_nf.get(str(nf), [])})
@@ -261,8 +263,11 @@ def create_app():
                     tarjetas=res['tarjetas'].to_dict('records'), alertas_fmt=af,
                     por_confirmar=[x for x in observadas if x['estado'] == 'POR CONFIRMAR'],
                     # las alertas INFO (anuladas, otra fecha) no se muestran al cajero: siguen en cierre.json y en la hoja Alertas del xlsx
-                    alertas=[{'nivel': 'ALERTA', 'detalle': f"Factura {a['factura']}: el código {a['codigo']} de {a['banco']} no cumple el formato esperado ({a['detalle']}). "
-                                                            f"Si lo escribió mal, deshaga el respaldo y regístrelo de nuevo; si es correcto, puede presentar igual."} for a in af]
+                    alertas=[({'nivel': 'ALERTA', 'detalle': f"Factura {a['factura']}: el código {a['codigo']} de {a['banco']} no cumple el formato esperado ({a['detalle']}). "
+                                                             f"Si lo escribió mal, deshaga el respaldo y regístrelo de nuevo; si es correcto, puede presentar igual."}
+                              if a['tipo'] == servicio.TIPO_FORMATO else
+                              {'nivel': 'ALERTA', 'detalle': f"Factura {a['factura']} ({a['banco']} {a['codigo']}): {a['detalle']} Si la tiene, deshaga el respaldo y regístrelo de nuevo con la fecha; si no, puede presentar igual."})
+                             for a in af]
                     + [a for a in res['alertas'].to_dict('records') if a['nivel'] != 'INFO'])
 
     @app.get('/borrador/{bid}', response_class=HTMLResponse)
@@ -354,23 +359,28 @@ def create_app():
     app.post('/borrador/{bid}/deshacer-descarte')(_descarte('deshacer_descarte', _undesc))
 
     @app.post('/borrador/{bid}/respaldo')
-    def respaldo_manual(request: Request, bid: str, factura: str = Form(''), banco: str = Form(''), codigo: str = Form(''), csrf: str = Form('')):
+    def respaldo_manual(request: Request, bid: str, factura: str = Form(''), banco: str = Form(''), codigo: str = Form(''), fecha_deposito: str = Form(''), csrf: str = Form('')):
         u, est = cargar_borrador(request, bid); verificar_csrf(request, csrf)
         if est.get('presentado'): raise StarletteHTTPException(404, 'Este borrador ya fue presentado.')
         nf = factura.strip(); antes = estado_de(est, nf)
         try:
-            nuevo, info = alm.registrar_respaldo(bid, est, u['usuario'], nf, banco, codigo)
+            nuevo, info = alm.registrar_respaldo(bid, est, u['usuario'], nf, banco, codigo, fecha_deposito)
         except ErrorUsuario as e:
-            alm.auditar(u['usuario'], 'respaldo_manual_rechazado', {'borrador': bid, 'factura': nf, 'banco': banco, 'codigo': codigo.strip(), 'motivo': str(e), 'anterior': antes})
+            alm.auditar(u['usuario'], 'respaldo_manual_rechazado', {'borrador': bid, 'factura': nf, 'banco': banco, 'codigo': codigo.strip(), 'fecha_deposito': fecha_deposito.strip(), 'motivo': str(e), 'anterior': antes})
             flash(request, str(e), 'error'); return RedirectResponse(f'/borrador/{bid}', 303)
         alm.guardar_estado(bid, nuevo)
         alm.auditar(u['usuario'], 'respaldo_manual', {'borrador': bid, 'factura': nf, **info, 'anterior': antes})
         msg = f"Factura {nf}: respaldo manual registrado ({info['banco']} {info['codigo']})."
         regla = catalogo.formato_incumplido(info['banco'], info['codigo'])
+        fecha_al = None if catalogo.es_qr(info['banco']) else catalogo.alerta_fecha_deposito(info['banco'], info.get('fecha_deposito'), alm.conciliar(bid, nuevo)['totales']['fecha_cierre'])
+        if info.get('fecha_deposito'): msg += f" Fecha del depósito: {info['fecha_deposito']}."
         if regla:
             alm.auditar(u['usuario'], 'alerta_formato', {'borrador': bid, 'factura': nf, 'banco': info['banco'], 'codigo': info['codigo'], 'regla': regla})
-            flash(request, f"{msg} FORMATO A REVISAR: se registró igual, pero no cumple la regla esperada ({regla}). Ingresos será notificado al presentar.", 'ambar')
-        else: flash(request, msg, 'ok')
+            msg += f" FORMATO A REVISAR: se registró igual, pero no cumple la regla esperada ({regla}). Ingresos será notificado al presentar."
+        if fecha_al:
+            alm.auditar(u['usuario'], 'alerta_fecha_deposito', {'borrador': bid, 'factura': nf, 'banco': info['banco'], 'codigo': info['codigo'], 'detalle': fecha_al})
+            msg += f" {fecha_al} Se registró igual; Ingresos será notificado al presentar."
+        flash(request, msg, 'ambar' if (regla or fecha_al) else 'ok')
         return RedirectResponse(f'/borrador/{bid}', 303)
 
     @app.post('/borrador/{bid}/tarjeta')

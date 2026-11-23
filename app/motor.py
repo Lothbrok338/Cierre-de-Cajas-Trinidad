@@ -159,7 +159,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
         nf = str(nf); m = fa.index[(fa['Número Factura'] == nf) & (fa['estado_prep'] == 'VALIDA') & (fa['tipo'] == 'QR')]
         if len(m) == 0:
             alertas.append(('ALERTA', nf, f"Reclasificación no aplicada: la factura {nf} ya no es una factura QR válida. Revise el banco y el código que registró para ella.")); continue
-        fa.at[m[0], 'tipo'] = 'C.I.'; ci_decl[nf] = {'banco': str(d.get('banco', '')), 'codigo': str(d.get('codigo', '')).strip()}
+        fa.at[m[0], 'tipo'] = 'C.I.'; ci_decl[nf] = {'banco': str(d.get('banco', '')), 'codigo': str(d.get('codigo', '')).strip(), 'fecha_deposito': str(d.get('fecha_deposito') or '').strip()}
     manuales = {str(x) for x in (respaldos_manuales or [])}
     bk = preparar_a2(a2)
     qr = fa[(fa['estado_prep'] == 'VALIDA') & (fa['tipo'] == 'QR')]
@@ -329,7 +329,7 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     for fi in fa.index[fa['tipo'] == 'C.I.']:
         nf = str(fa.at[fi, 'Número Factura']); d = ci_decl[nf]
         ci_rows.append({'factura': nf, 'razon_social': fa.at[fi, 'Razon Social'], 'estudiante': fa.at[fi, 'Nombre Estudiante'],
-                        'monto': float(fa.at[fi, 'Monto']), 'banco': d['banco'], 'codigo': d['codigo']})
+                        'monto': float(fa.at[fi, 'Monto']), 'banco': d['banco'], 'codigo': d['codigo'], 'fecha_deposito': d['fecha_deposito']})
     ci_sis = float(sum(r['monto'] for r in ci_rows)); ci_resp = float(sum(r['monto'] for r in ci_rows if r['codigo']))
     tot = {'fecha_cierre': fechas[0] if fechas else None, 'n_facturas_qr': len(qr), 'QR registrado': reg,
            'QR conciliado automático (CONCILIADA)': auto, 'QR confirmado por cajero': conf,

@@ -43,11 +43,11 @@
 {% if alertas_c %}
 <section class="alertas-rev" id="alertas-revision" aria-label="Alertas de revisión">
   <h2>⚠ Alertas de revisión ({{ alertas_c | length }}{% if n_alertas_pend != alertas_c | length %}, {{ n_alertas_pend }} sin revisar{% endif %})</h2>
-  <p>Códigos de asignación que no cumplen el formato esperado del banco. El cajero los registró igual; no bloquean la aprobación.</p>
+  <p>Códigos que no cumplen el formato esperado del banco, o fechas de depósito faltantes o dudosas. El cajero los registró igual; no bloquean la aprobación.</p>
   <div class="tabla-wrap"><table class="tabla">
-    <thead><tr><th>N° factura</th><th>Banco</th><th>Código</th><th>Regla esperada</th><th>Estado</th></tr></thead>
+    <thead><tr><th>N° factura</th><th>Banco</th><th>Código</th><th>Motivo</th><th>Estado</th></tr></thead>
     <tbody>{% for a in alertas_c %}<tr>
-      <td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Regla esperada">{{ a.detalle }}</td>
+      <td data-l="N° factura">{{ a.factura }}</td><td data-l="Banco">{{ a.banco }}</td><td data-l="Código" class="mono">{{ a.codigo }}</td><td data-l="Motivo">{{ a.detalle }}</td>
       <td data-l="Estado">{% if a.revisada_en %}<span class="insignia ins-verde">Revisada</span><br><small>{{ a.revisada_por | nombre_completo }} · {{ a.revisada_en | fecha_hora }}</small>
         {% elif es_ingresos %}<form method="post" action="/cierres/{{ c.id }}/alertas/{{ a.id }}/revisar" class="en-linea"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="btn btn-sec btn-sm" type="submit">Marcar como revisada</button></form>
         {% else %}<span class="insignia ins-alerta">⚠ Por revisar</span>{% endif %}</td>
@@ -150,8 +150,8 @@
 <h2>Comunicaciones internas</h2>
 {% if pl %}<p class="ayuda">Plantilla de comunicaciones internas cargada por el cajero: {{ pl.leidas }} {{ 'fila' if pl.leidas == 1 else 'filas' }} leídas · {{ pl.aplicadas }} aplicadas · {{ pl.con_problemas }} con problemas (no aplicadas).</p>{% endif %}
 <div class="tabla-wrap"><table class="tabla">
-  <thead><tr><th>N° factura</th><th>Cliente</th><th class="num">Monto (Bs)</th><th>Banco</th><th>Código de asignación</th></tr></thead>
-  <tbody>{% for r in ci %}<tr><td data-l="N° factura">{{ r.factura }}</td><td data-l="Cliente">{{ r.razon_social }}</td><td data-l="Monto (Bs)" class="num">{{ r.monto | bs }}</td><td data-l="Banco">{{ r.banco }}</td><td data-l="Código" class="mono">{{ r.codigo }}{% if r.factura in desde_pl %} <small>(desde plantilla)</small>{% endif %}</td></tr>{% endfor %}</tbody>
+  <thead><tr><th>N° factura</th><th>Cliente</th><th class="num">Monto (Bs)</th><th>Banco</th><th>Código de asignación</th><th>Fecha del depósito</th></tr></thead>
+  <tbody>{% for r in ci %}<tr><td data-l="N° factura">{{ r.factura }}</td><td data-l="Cliente">{{ r.razon_social }}</td><td data-l="Monto (Bs)" class="num">{{ r.monto | bs }}</td><td data-l="Banco">{{ r.banco }}</td><td data-l="Código" class="mono">{{ r.codigo }}{% if r.factura in desde_pl %} <small>(desde plantilla)</small>{% endif %}</td><td data-l="Fecha del depósito">{{ r.fecha_deposito or '—' }}</td></tr>{% endfor %}</tbody>
 </table></div>
 {% endif %}
 {% if notas_desc %}

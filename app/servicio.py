@@ -32,6 +32,28 @@ class ErrorUsuario(Exception):
     pass
 
 
+def ids_reporte_qr(res):
+    """Numeros de transaccion (normalizados) del reporte QR cargado en el borrador, de cualquier estado."""
+    b = res.get('banco')
+    return set() if b is None or len(b) == 0 else {catalogo.normalizar_codigo(x) for x in b['ID TRANSACCION']}
+
+
+def msg_ci_usada(banco, cn, c):
+    """Mensaje de bloqueo: el codigo de una C.I. ya esta en otro cierre vigente (como C.I. o, solo BANECO, como respaldo QR)."""
+    if c.get('origen') == 'QR':
+        return (f"El código {cn} de {banco} ya se usó como respaldo QR en el cierre {c['correlativo']} (cajero {c['usuario']}); "
+                f"no puede registrarse otra vez como comunicación interna.")
+    return f"El código {cn} de {banco} ya está registrado en el cierre {c['correlativo']} (cajero {c['usuario']})."
+
+
+def msg_qr_usado(idt, c):
+    """Mensaje de bloqueo: un numero de transaccion QR ya esta en otro cierre vigente (como QR o como C.I. BANECO)."""
+    if c.get('origen') == 'CI':
+        return (f"El número de transacción {idt} ya figura como comunicación interna BANECO en el cierre {c['correlativo']} (cajero {c['usuario']}); "
+                f"no puede respaldar una factura QR.")
+    return f"El número de transacción {idt} ya está en el cierre {c['correlativo']} (cajero {c['usuario']})."
+
+
 def sha256(ruta):
     h = hashlib.sha256()
     with open(ruta, 'rb') as f:
@@ -194,6 +216,7 @@ class Almacen:
         fc = res['totales']['fecha_cierre']; prev = self.vigente(fc, usuario) if fc else None
         excluir = prev['correlativo'] if prev else None
         cuenta_nf, cuenta_bc = {}, {}
+        ids_qr = ids_reporte_qr(res)
         for r in filas:
             if r['factura']: cuenta_nf.setdefault(r['factura'], []).append(r['fila'])
             cn = catalogo.normalizar_codigo(r['codigo'])
@@ -214,6 +237,7 @@ class Almacen:
             if not ok: mal(msg); continue
             if len(cuenta_nf[nf]) > 1: mal(f'La factura {nf} está repetida en la plantilla (también en la fila {otras(cuenta_nf[nf], r["fila"])}).'); continue
             if len(cuenta_bc[(banco, cn)]) > 1: mal(f'El código {cn} de {banco} está repetido en la plantilla (también en la fila {otras(cuenta_bc[(banco, cn)], r["fila"])}).'); continue
+            if banco == catalogo.BANCO_BANECO_CI and cn in ids_qr: mal(catalogo.MSG_BANECO_EN_REPORTE); continue
             f = idx.get(nf)
             if f is None: mal(f'La factura {nf} no existe en el movimiento del cajero.'); continue
             e = str(f['estado_conciliacion'])
@@ -227,16 +251,19 @@ class Almacen:
             otra = next((o for o, d in recl.items() if d['banco'] == banco and catalogo.normalizar_codigo(d['codigo']) == cn), None)
             if otra: mal(f'El código {cn} de {banco} ya está registrado en la factura {otra} de este cierre.'); continue
             c = self.conflictos_ci_banco(banco, cn, excluir)
-            if c: mal(f"El código {cn} de {banco} ya está registrado en el cierre {c['correlativo']} (cajero {c['usuario']}).".replace('Ya', 'ya')); continue
+            if c: mal(msg_ci_usada(banco, cn, c)); continue
             nuevo['confirmaciones'] = [x for x in nuevo['confirmaciones'] if x != nf]; nuevo['elecciones'].pop(nf, None)
             nuevo['respaldos_manuales'] = [x for x in nuevo.get('respaldos_manuales', []) if x != nf]
-            recl[nf] = {'banco': banco, 'codigo': cn}; nuevo['plantilla_origen'].append(nf); aplicadas.append(nf)
+            recl[nf] = {'banco': banco, 'codigo': cn}
+            fd = catalogo.normalizar_fecha_deposito(r.get('fecha_deposito'))
+            if fd: recl[nf]['fecha_deposito'] = fd
+            nuevo['plantilla_origen'].append(nf); aplicadas.append(nf)
         resumen = {'leidas': len(filas), 'aplicadas': len(aplicadas), 'con_problemas': len(problemas), 'descartadas': descartadas, 'problemas': problemas}
         pl.update(resumen); nuevo['plantilla'] = pl
         return nuevo, resumen
 
     # ---------------- respaldo manual ----------------
-    def registrar_respaldo(self, bid, est, usuario, nf, banco, codigo):
+    def registrar_respaldo(self, bid, est, usuario, nf, banco, codigo, fecha_deposito=''):
         """Valida y aplica un respaldo manual a una factura OBSERVADA. Devuelve (est_nuevo, resumen).
         Lanza ErrorUsuario con un mensaje claro si no es valido (no modifica `est`)."""
         nf = (nf or '').strip(); banco = (banco or '').strip(); codigo = (codigo or '').strip()
@@ -260,20 +287,23 @@ class Almacen:
                 motivo = al[0].split('): ', 1)[-1].rstrip('.') if al else 'número de transacción no válido'
                 raise ErrorUsuario(f'El número de transacción {codigo} no es válido para la factura {nf}: {motivo}.')
             c = [x for x in self.conflictos_para(r2, usuario) if x['factura'] == nf]
-            if c: raise ErrorUsuario(f"El número de transacción {codigo} ya está en el cierre {c[0]['correlativo']} (cajero {c[0]['usuario']}).")
+            if c: raise ErrorUsuario(msg_qr_usado(codigo, c[0]))
             return nuevo, {'banco': banco, 'codigo': codigo, 'resultado': 'CONFIRMADA POR CAJERO (RESPALDO MANUAL)'}
         ok, msg, cn = catalogo.validar_codigo(banco, codigo)
         if not ok: raise ErrorUsuario(msg)
         for otra, d in nuevo['reclasificaciones'].items():
             if otra != nf and d['banco'] == banco and catalogo.normalizar_codigo(d['codigo']) == cn:
                 raise ErrorUsuario(f'El código {cn} de {banco} ya está registrado en la factura {otra} de este cierre.')
+        if banco == catalogo.BANCO_BANECO_CI and cn in ids_reporte_qr(res): raise ErrorUsuario(catalogo.MSG_BANECO_EN_REPORTE)
         fc = res['totales']['fecha_cierre']; prev = self.vigente(fc, usuario) if fc else None
         c = self.conflictos_ci_banco(banco, cn, prev['correlativo'] if prev else None)
-        if c: raise ErrorUsuario(f"El código {cn} de {banco} ya está registrado en el cierre {c['correlativo']} (cajero {c['usuario']}).")
+        if c: raise ErrorUsuario(msg_ci_usada(banco, cn, c))
         nuevo['confirmaciones'] = [x for x in nuevo['confirmaciones'] if x != nf]; nuevo['elecciones'].pop(nf, None)
         nuevo['respaldos_manuales'] = [x for x in nuevo['respaldos_manuales'] if x != nf]
         nuevo['reclasificaciones'][nf] = {'banco': banco, 'codigo': cn}
-        return nuevo, {'banco': banco, 'codigo': cn, 'resultado': 'COMUNICACIÓN INTERNA'}
+        fd = catalogo.normalizar_fecha_deposito(fecha_deposito)
+        if fd: nuevo['reclasificaciones'][nf]['fecha_deposito'] = fd
+        return nuevo, {'banco': banco, 'codigo': cn, 'fecha_deposito': fd, 'resultado': 'COMUNICACIÓN INTERNA'}
 
     # ---------------- descarte de coincidencias sugeridas ----------------
     def descartar_coincidencia(self, bid, est, nf):
@@ -324,7 +354,12 @@ class Almacen:
             for r in con.execute(f"SELECT m.id_transaccion, m.factura, c.correlativo, c.usuario FROM cierre_movimientos m JOIN cierres c ON c.id=m.cierre_id "
                                  f"WHERE c.estado_revision!='REEMPLAZADO' AND m.id_transaccion IN ({q})", list(ids)):
                 out.append({'factura': ids[r['id_transaccion']], 'id_transaccion': r['id_transaccion'],
-                            'correlativo': r['correlativo'], 'usuario': r['usuario']})
+                            'correlativo': r['correlativo'], 'usuario': r['usuario'], 'origen': 'QR'})
+            # sentido inverso: el mismo numero ya figura como C.I. BANECO (deposito de fecha anterior) en otro cierre vigente
+            nids = {catalogo.normalizar_codigo(k): v for k, v in ids.items()}
+            for r in con.execute(f"SELECT k.codigo, c.correlativo, c.usuario FROM cierre_ci k JOIN cierres c ON c.id=k.cierre_id "
+                                 f"WHERE c.estado_revision!='REEMPLAZADO' AND k.banco=? AND k.codigo IN ({','.join('?' * len(nids))})", [catalogo.BANCO_BANECO_CI, *nids]):
+                out.append({'factura': nids[r['codigo']], 'id_transaccion': r['codigo'], 'correlativo': r['correlativo'], 'usuario': r['usuario'], 'origen': 'CI'})
         finally: con.close()
         return out
 
@@ -334,12 +369,17 @@ class Almacen:
         return [c for c in self.conflictos_ids(res) if not (prev and c['correlativo'] == prev['correlativo'])]
 
     def conflictos_ci_banco(self, banco, codigo_norm, excluir_correlativo=None):
-        """Primer cierre vigente (cualquier usuario) que ya usa el par (banco, codigo) de una C.I., o None."""
+        """Primer cierre vigente (cualquier usuario) que ya usa el par (banco, codigo) de una C.I., o None.
+        Para BANECO tambien cuenta como uso el mismo numero de transaccion respaldado como QR (origen 'QR'; las C.I. son origen 'CI')."""
         con = self.con()
         try:
             for r in con.execute("SELECT c.correlativo, c.usuario FROM cierre_ci k JOIN cierres c ON c.id=k.cierre_id "
                                  "WHERE c.estado_revision!='REEMPLAZADO' AND k.banco=? AND k.codigo=?", (banco, codigo_norm)):
-                if r['correlativo'] != excluir_correlativo: return {'correlativo': r['correlativo'], 'usuario': r['usuario']}
+                if r['correlativo'] != excluir_correlativo: return {'correlativo': r['correlativo'], 'usuario': r['usuario'], 'origen': 'CI'}
+            if banco == catalogo.BANCO_BANECO_CI:
+                for r in con.execute("SELECT c.correlativo, c.usuario FROM cierre_movimientos m JOIN cierres c ON c.id=m.cierre_id "
+                                     "WHERE c.estado_revision!='REEMPLAZADO' AND m.id_transaccion=?", (codigo_norm,)):
+                    if r['correlativo'] != excluir_correlativo: return {'correlativo': r['correlativo'], 'usuario': r['usuario'], 'origen': 'QR'}
         finally: con.close()
         return None
 
@@ -423,14 +463,13 @@ class Almacen:
             confl = [c for c in self.conflictos_ids(res) if not (prev and c['correlativo'] == prev['correlativo'])]
             if confl:
                 c = confl[0]
-                raise ErrorUsuario(f"La factura {c['factura']} usa el número de transacción {c['id_transaccion']}, que ya está en el cierre "
-                                   f"{c['correlativo']} (cajero {c['usuario']}). No se puede presentar.")
+                raise ErrorUsuario(f"La factura {c['factura']}: " + msg_qr_usado(c['id_transaccion'], c) + ' No se puede presentar.')
             confl_ci = self.conflictos_ci_para(res, usuario)
             if confl_ci:
                 c = confl_ci[0]
-                raise ErrorUsuario(f"La comunicación interna de la factura {c['factura']} ({c['banco']} {c['codigo']}) ya está registrada en el cierre "
-                                   f"{c['correlativo']} (cajero {c['usuario']}). No se puede presentar.")
-            alertas = alertas_formato(res, est)
+                raise ErrorUsuario(f"La comunicación interna de la factura {c['factura']} ({c['banco']} {c['codigo']}): "
+                                   + msg_ci_usada(c['banco'], catalogo.normalizar_codigo(c['codigo']), c) + ' No se puede presentar.')
+            alertas = alertas_revision(res, est)
             ahora = datetime.now(); presentado_en = ahora.strftime('%Y-%m-%d %H:%M:%S')
             version = (prev['version'] + 1) if prev else 1
             if prev:  # versiones previas (incluidas ya reemplazadas) -> max
@@ -488,7 +527,8 @@ class Almacen:
             for _, r in f[f['estado_conciliacion'].isin(['CONCILIADA', 'CONFIRMADA POR CAJERO'])].iterrows():
                 con.execute('INSERT INTO cierre_movimientos VALUES (?,?,?,?)', (cid, str(r['ID TRANSACCION']), str(r['Número Factura']), float(r['Monto'])))
             for r in res.get('ci', []):
-                con.execute('INSERT INTO cierre_ci VALUES (?,?,?,?,?)', (cid, r['factura'], r['banco'], catalogo.normalizar_codigo(r['codigo']), r['monto']))
+                con.execute('INSERT INTO cierre_ci (cierre_id, factura, banco, codigo, monto, fecha_deposito) VALUES (?,?,?,?,?,?)',
+                            (cid, r['factura'], r['banco'], catalogo.normalizar_codigo(r['codigo']), r['monto'], r.get('fecha_deposito') or None))
             for a in alertas:
                 con.execute('INSERT INTO alertas_cierre (cierre_id, tipo, factura, banco, codigo, detalle, creado_en) VALUES (?,?,?,?,?,?,?)',
                             (cid, a['tipo'], a['factura'], a['banco'], a['codigo'], a['detalle'], presentado_en))
@@ -800,6 +840,8 @@ def evaluar(res):
         elif (r['banco'], cn) in vistos:
             razones.append(f"El código {cn} de {r['banco']} está repetido en las facturas {vistos[(r['banco'], cn)]} y {r['factura']}.")
         else: vistos[(r['banco'], cn)] = r['factura']
+        if ok and r['banco'] == catalogo.BANCO_BANECO_CI and cn in ids_reporte_qr(res):
+            razones.append(f"Comunicación interna de la factura {r['factura']}: " + catalogo.MSG_BANECO_EN_REPORTE)
     if t['Estado QR'] == 'NO CUADRA' or (t['Estado QR'] == 'CUADRA' and abs(dt) >= 0.005): nivel = 'rojo'
     elif t['Estado QR'] == 'PENDIENTE DE CONFIRMACIÓN': nivel = 'ambar'
     else: nivel = 'verde'
@@ -825,6 +867,20 @@ def alertas_formato(res, est):
             cn = catalogo.normalizar_codigo(str(r['ID TRANSACCION'])); regla = catalogo.formato_incumplido(catalogo.BANCO_QR, cn)
             if regla: out.append({'tipo': TIPO_FORMATO, 'factura': str(r['Número Factura']), 'banco': catalogo.BANCO_QR, 'codigo': cn, 'detalle': regla})
     return out
+
+
+def alertas_fecha(res):
+    """Alertas NO bloqueantes de la fecha del deposito de las C.I.: BANECO sin fecha, fecha invalida o posterior al cierre."""
+    out = []; fc = res['totales'].get('fecha_cierre')
+    for r in res.get('ci', []):
+        det = catalogo.alerta_fecha_deposito(r['banco'], r.get('fecha_deposito'), fc)
+        if det: out.append({'tipo': catalogo.TIPO_FECHA, 'factura': str(r['factura']), 'banco': r['banco'], 'codigo': catalogo.normalizar_codigo(r['codigo']), 'detalle': det})
+    return out
+
+
+def alertas_revision(res, est):
+    """Todas las alertas no bloqueantes que se guardan con el cierre: formato del codigo + fecha del deposito."""
+    return alertas_formato(res, est) + alertas_fecha(res)
 
 
 def candidatos(res, nf):

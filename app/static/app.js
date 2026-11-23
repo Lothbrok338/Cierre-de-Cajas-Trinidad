@@ -49,3 +49,11 @@ document.querySelectorAll('[data-copiar]').forEach(function (b) {
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(texto).then(listo, manual); else manual();
   });
 });
+
+/* Respaldo manual: la fecha del depósito solo aplica a los bancos de comunicación interna (no a QR BANECO) */
+document.querySelectorAll('form.form-manual').forEach(function (f) {
+  var sel = f.querySelector('select[name=banco]'), cont = f.querySelector('.campo-fecha-deposito');
+  if (!sel || !cont) return;
+  function ajustar() { cont.hidden = (sel.value === '' || sel.value === 'QR BANECO'); }
+  sel.addEventListener('change', ajustar); ajustar();
+});

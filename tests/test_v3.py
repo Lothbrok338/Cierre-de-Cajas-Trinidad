@@ -278,14 +278,14 @@ def crear_db_v2(ruta):
 
 def test_migracion_v2_a_v3_idempotente_y_siembra(tmp_path, monkeypatch):
     data = tmp_path / 'data'; data.mkdir(); ruta = str(data / 'cierres.db'); crear_db_v2(ruta)
-    assert sqlite3.connect(ruta).execute('PRAGMA user_version').fetchone()[0] == 2 and dbm.VERSION_ESQUEMA == 5
+    assert sqlite3.connect(ruta).execute('PRAGMA user_version').fetchone()[0] == 2 and dbm.VERSION_ESQUEMA == 6
     monkeypatch.setenv('DATA_DIR', str(data)); monkeypatch.setenv('APP_USERS', json.dumps(USUARIOS))
     monkeypatch.setenv('SECRET_KEY', 'k'); monkeypatch.setenv('COOKIE_SECURE', '0')
     from app.main import create_app
     for _ in range(2):      # arrancar dos veces: no falla, no duplica, no pierde nada
         app = create_app()
         con = sqlite3.connect(ruta)
-        assert con.execute('PRAGMA user_version').fetchone()[0] == 5
+        assert con.execute('PRAGMA user_version').fetchone()[0] == 6
         assert {r[0] for r in con.execute("select name from sqlite_master where type='table'")} >= {'usuarios', 'revisiones_historial', 'cierres', 'auditoria', 'cierre_ci', 'alertas_cierre'}
         assert con.execute('select correlativo, estado_revision, total_cierre, revisado_por from cierres order by id').fetchall() == [
             ('CC-2026-00001', 'REEMPLAZADO', 1100, 'ing'), ('CC-2026-00002', 'CONFORME', 1300, 'ing'), ('CC-2026-00003', 'PENDIENTE DE REVISIÓN', 500, None)]
