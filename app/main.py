@@ -538,6 +538,16 @@ def create_app():
             flash(request, str(e), 'error')
         return RedirectResponse(f'/cierres/{cid}#alertas-revision', 303)
 
+    @app.post('/cierres/{cid}/eliminar')
+    def eliminar(request: Request, cid: int, motivo: str = Form(''), correlativo: str = Form(''), csrf: str = Form('')):
+        u = superadmin(request); verificar_csrf(request, csrf)
+        if alm.cierre(cid) is None: raise StarletteHTTPException(404, 'No se encontró el cierre.')
+        try: corr, existia = alm.eliminar(cid, u['usuario'], motivo, correlativo)
+        except ErrorUsuario as e:
+            flash(request, str(e), 'error'); return RedirectResponse(f'/cierres/{cid}', 303)
+        flash(request, f"Cierre {corr} eliminado. Quedó registrado en auditoría." + ('' if existia else ' (La carpeta de archivos no existía; se eliminaron solo los registros.)'), 'ok')
+        return RedirectResponse('/', 303)
+
     @app.post('/cierres/{cid}/revertir')
     def revertir(request: Request, cid: int, motivo: str = Form(''), csrf: str = Form('')):
         u = superadmin(request); verificar_csrf(request, csrf)

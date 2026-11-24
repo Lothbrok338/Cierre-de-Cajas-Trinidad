@@ -479,11 +479,9 @@ class Almacen:
             alertas = alertas_revision(res, est)
             ahora = datetime.now(); presentado_en = ahora.strftime('%Y-%m-%d %H:%M:%S')
             version = (prev['version'] + 1) if prev else 1
-            if prev:  # versiones previas (incluidas ya reemplazadas) -> max
-                version = con.execute('SELECT MAX(version)+1 FROM cierres WHERE fecha_cierre=? AND usuario=?', (fc, usuario)).fetchone()[0]
-            ult = con.execute("SELECT correlativo FROM cierres WHERE correlativo LIKE ? ORDER BY correlativo DESC LIMIT 1",
-                              (f'CC-{ahora.year}-%',)).fetchone()
-            corr = f"CC-{ahora.year}-{(int(ult[0].split('-')[-1]) + 1) if ult else 1:05d}"
+            # versiones previas (incluidas ya reemplazadas) -> max; tras eliminar una version puede no haber vigente pero si anteriores
+            version = (con.execute('SELECT MAX(version) FROM cierres WHERE fecha_cierre=? AND usuario=?', (fc, usuario)).fetchone()[0] or 0) + 1
+            corr = f"CC-{ahora.year}-{self._ultimo_numero(con, ahora.year) + 1:05d}"
             seguro = re.sub(r'[^A-Za-z0-9._-]', '_', usuario)
             rel = os.path.join('cierres', fc[:4], fc[5:7], fc, seguro, f'v{version}')
             destino = os.path.join(self.dir, rel)
@@ -588,6 +586,64 @@ class Almacen:
         except Exception as e:   # la revision ya quedo registrada; el PDF original sigue disponible
             self.auditar(revisor, 'pdf_revision_error', {'cierre': cid, 'error': str(e)[:200]})
         return self.cierre(cid)
+
+    @staticmethod
+    def _ultimo_numero(con, anio):
+        """Mayor numero de correlativo CC-AAAA-NNNNN usado alguna vez: cierres vigentes + cierres eliminados (quedan en auditoria)."""
+        pref = f'CC-{anio}-'; mx = 0
+        for (c,) in con.execute("SELECT correlativo FROM cierres WHERE correlativo LIKE ?", (pref + '%',)):
+            try: mx = max(mx, int(c.split('-')[-1]))
+            except ValueError: pass
+        for (d,) in con.execute("SELECT detalle_json FROM auditoria WHERE accion='eliminar_cierre'"):
+            try: c = json.loads(d).get('correlativo') or ''
+            except ValueError: continue
+            if c.startswith(pref):
+                try: mx = max(mx, int(c.split('-')[-1]))
+                except ValueError: pass
+        return mx
+
+    # ---------------- eliminar cierre (superadmin) ----------------
+    def eliminar(self, cid, usuario, motivo, correlativo_confirmado):
+        """Superadmin: borra el cierre (filas y carpeta de archivos). La auditoria lo conserva y el correlativo no se reutiliza.
+        Devuelve (correlativo, carpeta_existia)."""
+        mot = ' '.join((motivo or '').split())
+        if len(mot) < MIN_OBSERVACION:
+            raise ErrorUsuario(f'Para eliminar el cierre escriba un motivo de al menos {MIN_OBSERVACION} caracteres.')
+        con = self.con(); momento = db.ahora(); carpeta = None; existia = False
+        try:
+            con.execute('BEGIN IMMEDIATE')
+            c = con.execute('SELECT * FROM cierres WHERE id=?', (cid,)).fetchone()
+            if c is None: raise ErrorUsuario('No se encontró el cierre.')
+            if (correlativo_confirmado or '').strip() != c['correlativo']:
+                raise ErrorUsuario(f"Para confirmar escriba exactamente el correlativo {c['correlativo']}.")
+            base = os.path.realpath(os.path.join(self.dir, 'cierres'))
+            cand = os.path.realpath(os.path.join(self.dir, c['ruta'] or ''))
+            if cand != base and cand.startswith(base + os.sep): carpeta = cand
+            archivos = {}
+            if carpeta and os.path.isdir(carpeta):
+                existia = True
+                for n in sorted(os.listdir(carpeta)):
+                    f = os.path.join(carpeta, n)
+                    if os.path.isfile(f): archivos[n] = sha256(f)
+            det = {'correlativo': c['correlativo'], 'cierre': cid, 'fecha_cierre': c['fecha_cierre'], 'cajero': c['usuario'], 'nombre': c['nombre'],
+                   'total_cierre': c['total_cierre'], 'estado_revision': c['estado_revision'], 'version': c['version'],
+                   'reemplaza_a': c['reemplaza_a'], 'motivo': mot, 'sha256_movimiento': c['sha256_movimiento'], 'sha256_banco': c['sha256_banco'],
+                   'sha256_plantilla': c['sha256_plantilla'], 'sha256_archivos': archivos, 'carpeta_existia': existia}
+            for t in ('cierre_movimientos', 'cierre_ci', 'alertas_cierre', 'revisiones_historial'):
+                con.execute(f'DELETE FROM {t} WHERE cierre_id=?', (cid,))
+            con.execute('DELETE FROM cierres WHERE id=?', (cid,))
+            con.execute('INSERT INTO auditoria (momento, usuario, accion, detalle_json) VALUES (?,?,?,?)',
+                        (momento, usuario, 'eliminar_cierre', json.dumps(det, ensure_ascii=False, default=str)))
+            con.execute('COMMIT')
+        except BaseException:
+            try: con.execute('ROLLBACK')
+            except Exception: pass
+            raise
+        finally: con.close()
+        if existia:
+            try: shutil.rmtree(carpeta)
+            except OSError as e: self.auditar(usuario, 'eliminar_cierre_archivos_error', {'cierre': cid, 'error': str(e)[:200]})
+        return c['correlativo'], existia
 
     # ---------------- revertir revision (superadmin) ----------------
     def revertir(self, cid, usuario, motivo):

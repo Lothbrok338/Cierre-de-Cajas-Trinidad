@@ -56,6 +56,26 @@
 </section>
 {% endif %}
 
+{% if es_super %}
+<section class="tarjeta revision-ing" aria-label="Eliminar cierre">
+  <h2>Eliminar cierre <small>(solo superadmin)</small></h2>
+  <p class="ayuda">Borra el cierre y sus archivos y libera sus números de transacción y códigos de C.I. Queda registrado en auditoría. No se puede deshacer.</p>
+  <button class="btn btn-peligro" type="button" data-abrir="dlg-eliminar">Eliminar cierre</button>
+</section>
+<dialog id="dlg-eliminar">
+  <form method="post" action="/cierres/{{ c.id }}/eliminar">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <h2>Eliminar el cierre {{ c.correlativo }}</h2>
+    <p>Se borrarán el cierre, sus movimientos, comunicaciones internas, alertas, historial y archivos. El número {{ c.correlativo }} no se volverá a usar.</p>
+    <label for="mot-del">Motivo (obligatorio, mínimo {{ MIN_OBS }} caracteres)</label>
+    <textarea id="mot-del" name="motivo" rows="4" required minlength="{{ MIN_OBS }}"></textarea>
+    <label for="corr-del">Para confirmar escriba <strong>{{ c.correlativo }}</strong></label>
+    <input id="corr-del" name="correlativo" type="text" required autocomplete="off" pattern="{{ c.correlativo }}">
+    <div class="botones"><button type="button" class="btn btn-sec" data-cerrar>Cancelar</button><button type="submit" class="btn btn-peligro" data-espera="Eliminando…">Eliminar definitivamente</button></div>
+  </form>
+</dialog>
+{% endif %}
+
 {% if es_super and c.estado_revision in ('CONFORME', 'RECHAZADO') %}
 <section class="tarjeta revision-ing" aria-label="Revertir revisión">
   <h2>Revertir revisión <small>(solo superadmin)</small></h2>
