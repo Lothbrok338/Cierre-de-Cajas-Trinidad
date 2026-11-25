@@ -7,8 +7,8 @@
 <form class="tarjeta formulario" method="post" action="/nuevo" enctype="multipart/form-data" id="form-nuevo">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="campo">
-    <label for="movimiento">1. Movimiento del cajero <small>(.xls o .xlsx del Sistema de Facturación, reporte «Ingreso Diario»)</small></label>
-    <input id="movimiento" name="movimiento" type="file" accept=".xls,.xlsx" required>
+    <label for="movimiento">1. Movimiento del cajero <small>(Excel (.xls/.xlsx) o PDF del reporte Ingreso Diario del Sistema de Facturación)</small></label>
+    <input id="movimiento" name="movimiento" type="file" accept=".xls,.xlsx,.pdf" required>
   </div>
   <div class="campo">
     <label for="banco">2. Reporte QR BANECO <small>(.xlsx descargado del banco)</small></label>

@@ -28,8 +28,8 @@
   <details class="desplegable"><summary>Reemplazar archivos originales (opcional)</summary>
     <form method="post" action="/borrador/{{ bid }}/archivos" enctype="multipart/form-data" class="form-archivos">
       <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label for="nuevo-movimiento">Movimiento del cajero <small>(.xls o .xlsx; deje vacío para conservar el actual)</small></label>
-      <input id="nuevo-movimiento" name="movimiento" type="file" accept=".xls,.xlsx">
+      <label for="nuevo-movimiento">Movimiento del cajero <small>(Excel (.xls/.xlsx) o PDF del reporte Ingreso Diario; deje vacío para conservar el actual)</small></label>
+      <input id="nuevo-movimiento" name="movimiento" type="file" accept=".xls,.xlsx,.pdf">
       <label for="nuevo-banco">Reporte QR BANECO <small>(.xlsx; deje vacío para conservar el actual)</small></label>
       <input id="nuevo-banco" name="banco" type="file" accept=".xlsx">
       <label for="nuevo-plantilla">Plantilla de comunicaciones internas <small>(.xlsx; deje vacío para conservar la actual)</small></label>

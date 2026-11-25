@@ -6,7 +6,7 @@ from . import auth, catalogo, db, motor, plantilla
 from .formato import fecha
 
 MAX_BYTES = 10 * 1024 * 1024
-COLS_A1 = ['Nro', 'Fecha', 'Número Factura', 'Razon Social', 'Nombre Estudiante', 'Tipo Pago', 'Estado', 'Monto']
+COLS_A1 = ['Nro', 'Fecha', 'Número Factura', 'Tipo Pago', 'Estado', 'Monto']
 COLS_A2 = ['ID TRANSACCION', 'TITULAR ORIGEN', 'FECHA / HORA', 'MONTO']
 MSG_A1 = 'El archivo no parece ser el reporte de Ingreso Diario del sistema de facturación.'
 MSG_A2 = 'El archivo no parece ser el reporte de pagos QR BANECO del banco.'
@@ -68,13 +68,22 @@ def _tipo_real(path):
     return None
 
 
+def _tipo_real_a1(path):
+    """Como _tipo_real, y 'pdf' si el contenido es un PDF (el movimiento admite Excel o PDF)."""
+    t = _tipo_real(path)
+    if t: return t
+    with open(path, 'rb') as f: return 'pdf' if b'%PDF' in f.read(1024) else None
+
+
 def validar_a1(path):
     """Devuelve (extension_real, metadatos). Lanza ErrorUsuario si no es el reporte esperado."""
-    ext = _tipo_real(path)
-    if ext is None: raise ErrorUsuario(MSG_A1)
+    ext = _tipo_real_a1(path)
+    if ext is None: raise ErrorUsuario(MSG_A1 + ' Suba el archivo Excel (.xls/.xlsx) o el PDF del reporte.')
     try:
         df = motor.parse_a1(path)
         meta = motor.metadatos_a1(path)
+    except motor.ErrorLecturaA1 as e:
+        raise ErrorUsuario(f'{MSG_A1} {e}')
     except Exception:
         raise ErrorUsuario(MSG_A1)
     if any(c not in df.columns for c in COLS_A1) or df.empty: raise ErrorUsuario(MSG_A1)

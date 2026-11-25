@@ -31,44 +31,133 @@ def num(s):
 def _es_xlsx(path):
     with open(path, 'rb') as fh: return fh.read(4) == b'PK\x03\x04'
 
-def leer_filas_a1(path):
-    """Devuelve (filas, datemode). filas = lista de listas (celdas vacias = ''). datemode None si es xlsx."""
+def _es_pdf(path):
+    with open(path, 'rb') as fh: return b'%PDF' in fh.read(1024)
+
+class ErrorLecturaA1(ValueError):
+    """El movimiento del cajero no se pudo leer; el mensaje dice que falta (solo nombres de hojas/columnas, nunca datos personales)."""
+
+def _nk(s):
+    """Clave de comparacion: sin tildes, mayusculas ni espacios/saltos/signos ('Número\nFactura' == 'numero factura')."""
+    s = unicodedata.normalize('NFD', str(s).lower())
+    return re.sub(r'[^a-z0-9]', '', ''.join(c for c in s if unicodedata.category(c) != 'Mn'))
+
+# columnas del reporte: clave normalizada -> nombre canonico
+COLS_A1_CANON = {_nk(c): c for c in ['Nro', 'Fecha', 'Número Factura', 'Nit/C.I.', 'Razon Social', 'Nombre Estudiante', 'Tipo Pago',
+                                      'Banco / Cuenta bancaria', 'Código de Bancarización', 'Nro. Cuenta SAP asociada', 'Monto', 'Cuenta', 'Estado']}
+COLS_A1_OBLIG = ['Nro', 'Fecha', 'Número Factura', 'Tipo Pago', 'Monto', 'Estado']
+COLS_A1_OPC = ['Nit/C.I.', 'Razon Social', 'Nombre Estudiante', 'Banco / Cuenta bancaria', 'Código de Bancarización', 'Nro. Cuenta SAP asociada', 'Cuenta']
+
+def _es_cabecera(celdas):
+    ks = {_nk(x) for x in celdas if isinstance(x, str)}
+    return 'nro' in ks and 'monto' in ks
+
+def _sheet_rows_a1(path):
+    """Todas las hojas como (nombre, filas, datemode); 'RIngresoDiario' primero si existe."""
     if _es_xlsx(path):
         with open(path, 'rb') as fh: wb = openpyxl.load_workbook(fh, data_only=True)   # objeto archivo: no depende de la extension
-        ws = wb['RIngresoDiario'] if 'RIngresoDiario' in wb.sheetnames else wb.active
-        return [['' if v is None else v for v in r] for r in ws.iter_rows(values_only=True)], None
-    wb = xlrd.open_workbook(path); sh = wb.sheet_by_name('RIngresoDiario')
-    return [sh.row_values(r) for r in range(sh.nrows)], wb.datemode
+        hojas = [(ws.title, [['' if v is None else v for v in r] for r in ws.iter_rows(values_only=True)], None) for ws in wb.worksheets]
+    else:
+        wb = xlrd.open_workbook(path)
+        hojas = [(sh.name, [sh.row_values(r) for r in range(sh.nrows)], wb.datemode) for sh in wb.sheets()]
+    return sorted(hojas, key=lambda h: h[0] != 'RIngresoDiario')   # sort estable
+
+def _hoja_a1(path):
+    """(filas, datemode, indice_cabecera) de la primera hoja con una fila de cabecera ('Nro' y 'Monto')."""
+    hojas = _sheet_rows_a1(path)
+    for _, rows, dm in hojas:
+        for i, row in enumerate(rows):
+            if _es_cabecera(row): return rows, dm, i
+    nombres = ', '.join(h[0] for h in hojas) or '(ninguna)'
+    raise ErrorLecturaA1(f"No se encontró la tabla del reporte (no hay una fila con 'Nro' y 'Monto'). Hojas encontradas: {nombres}.")
+
+def leer_filas_a1(path):
+    """Devuelve (filas, datemode) de la hoja del reporte. filas = lista de listas (celdas vacias = ''). datemode None si es xlsx."""
+    rows, dm, _ = _hoja_a1(path)
+    return rows, dm
+
+_ESTADOS = {_nk(v): v for v in CONFIG['estados_validos'] + CONFIG['estados_excluidos']}
+
+def canon_estado(x):
+    """'Valido'/'VÁLIDO' -> 'Válido'; 'ANULADO' -> 'Anulado'; otro valor queda tal cual (se alerta en preparar_a1)."""
+    return _ESTADOS.get(_nk(x), str(x).strip())
+
+def canon_tipo_pago(x):
+    return re.sub(r'\s+', ' ', str(x)).strip().upper()
+
+_RE_FECHA = re.compile(r'(\d{1,2})/(\d{1,2})/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?')
+
+def _fecha(x, datemode):
+    import datetime as dt
+    if hasattr(x, 'year'): return x
+    if isinstance(x, str):
+        m = _RE_FECHA.search(x)
+        if not m: raise ValueError(f'fecha no reconocida: {x!r}')
+        d, mo, y, h, mi, se = m.groups()
+        return dt.datetime(int(y), int(mo), int(d), int(h or 0), int(mi or 0), int(se or 0))
+    return xlrd.xldate_as_datetime(x, datemode)
+
+def _monto(x):
+    if isinstance(x, (int, float)): return float(x)
+    return num(x)
+
+def _df_a1(det, hdr_cols):
+    """det: lista de dicts {columna canonica: valor crudo, '_fila_excel': n}. Mismo resultado para Excel y PDF."""
+    faltan = [c for c in COLS_A1_OBLIG if c not in hdr_cols]
+    if faltan:
+        raise ErrorLecturaA1(f"Faltan las columnas: {', '.join(faltan)}. Columnas encontradas: {', '.join(hdr_cols) or '(ninguna)'}.")
+    if not det: raise ErrorLecturaA1('La tabla del reporte no tiene filas de detalle.')
+    df = pd.DataFrame(det)
+    for c in COLS_A1_OPC:
+        if c not in df.columns: df[c] = ''
+    return df
+
+def _normalizar_a1(df, datemode):
+    try:
+        df['Nro'] = df['Nro'].apply(lambda x: int(float(str(x).replace(',', '').strip())))
+        df['Fecha'] = df['Fecha'].apply(lambda x: _fecha(x, datemode))
+        df['Número Factura'] = df['Número Factura'].apply(lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x).strip())
+        df['Monto'] = df['Monto'].apply(_monto).astype(float)
+    except (ValueError, TypeError) as e:
+        raise ErrorLecturaA1(f'Hay filas con datos que no se pueden interpretar (Nro, Fecha o Monto inválidos): {str(e)[:80]}')
+    df['Estado'] = df['Estado'].apply(canon_estado)
+    df['Tipo Pago'] = df['Tipo Pago'].apply(canon_tipo_pago)
+    for c in COLS_A1_OPC: df[c] = df[c].apply(lambda x: '' if x is None else x)
+    return df
 
 def parse_a1(path):
-    rows, datemode = leer_filas_a1(path)
-    hdr = next(r for r, row in enumerate(rows) if any(isinstance(x, str) and x.strip() == 'Nro' for x in row))
+    """Lee el reporte 'Ingreso Diario' (.xls, .xlsx o .pdf, detectado por contenido). df.attrs['alertas_lectura'] = alertas de la lectura (PDF)."""
+    if _es_pdf(path):
+        from . import lector_pdf
+        det, cols, _meta, alertas = lector_pdf.leer_pdf_a1(path)
+        df = _normalizar_a1(_df_a1(det, cols), None)
+        df.attrs['alertas_lectura'] = alertas
+        return df
+    rows, datemode, hdr = _hoja_a1(path)
     cols = {}
     for c, x in enumerate(rows[hdr]):
-        if x != '': cols[re.sub(r'\s+', ' ', str(x)).strip()] = c
+        k = _nk(x)
+        if k in COLS_A1_CANON and COLS_A1_CANON[k] not in cols: cols[COLS_A1_CANON[k]] = c
     det = []; r = hdr + 1
     while r < len(rows) and any(x != '' for x in rows[r]):
         d = {k: (rows[r][c] if c < len(rows[r]) else '') for k, c in cols.items()}; d['_fila_excel'] = r + 1; det.append(d); r += 1
-    df = pd.DataFrame(det)
-    df['Nro'] = df['Nro'].astype(int)
-    df['Fecha'] = df['Fecha'].apply(lambda x: x if hasattr(x, 'year') else xlrd.xldate_as_datetime(x, datemode))
-    df['Número Factura'] = df['Número Factura'].apply(lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x))
-    df['Monto'] = df['Monto'].astype(float)
+    df = _normalizar_a1(_df_a1(det, list(cols)), datemode)
+    df.attrs['alertas_lectura'] = []
     return df
 
 def metadatos_a1(path):
-    """Metadatos de la cabecera del reporte (p. ej. 'Caja:'). Devuelve dict con 'caja' ('' si no existe)."""
-    rows, _ = leer_filas_a1(path)
+    """Metadatos de la cabecera del reporte. Devuelve dict con 'caja' ('' si no existe) y, en PDF, usuario/fecha_emision/sede."""
+    if _es_pdf(path):
+        from . import lector_pdf
+        return lector_pdf.leer_pdf_a1(path)[2]
+    rows, _, hdr = _hoja_a1(path)
     caja = ''
-    for row in rows[:hdr_limite(rows)]:
+    for row in rows[:hdr]:
         for c, x in enumerate(row):
             if isinstance(x, str) and x.strip().rstrip(':').strip().lower() == 'caja':
                 caja = next((str(v).strip() for v in row[c + 1:] if v != ''), ''); break
         if caja: break
     return {'caja': caja}
-
-def hdr_limite(rows):
-    return next((r for r, row in enumerate(rows) if any(isinstance(x, str) and x.strip() == 'Nro' for x in row)), min(len(rows), 20))
 
 def parse_a2(path):
     ws = openpyxl.load_workbook(path).active
@@ -86,7 +175,7 @@ def preparar_a1(a1, cfg=CONFIG):
     """R1. Devuelve (facturas_df con columnas 'tipo' y 'estado_prep', alertas list)."""
     f = a1.copy(); alertas = []; tipos = []; est = []
     for _, r in f.iterrows():
-        e = str(r['Estado']).strip(); tp = str(r['Tipo Pago']).strip().upper(); ref = str(r['Número Factura'])
+        e = canon_estado(r['Estado']); tp = canon_tipo_pago(r['Tipo Pago']); ref = str(r['Número Factura'])
         if e in cfg['estados_excluidos']:
             tipos.append(None); est.append(f'EXCLUIDA ({e})')
             alertas.append(('INFO', ref, f"La factura {ref} (Bs {r['Monto']:.2f}) está {e} y no se cuenta en el cierre."))
@@ -153,6 +242,9 @@ def conciliar_df(a1, a2, tarjeta_declarada, confirmaciones=None, elecciones=None
     conformidad: None | 'CONFORME' | 'NO CONFORME' (+ motivo). Lanza ValueError si no es valida."""
     alertas = []
     fa, al = preparar_a1(a1, cfg); alertas += al
+    alertas += list(a1.attrs.get('alertas_lectura') or [])
+    if not any(str(v).strip() for col in ('Razon Social', 'Nombre Estudiante') for v in fa[col]):
+        alertas.append(('ALERTA', '', 'El reporte de facturación no trae nombres (ni Razón Social ni Nombre Estudiante): el cruce con el banco solo puede usar el monto y todas las coincidencias quedan en nivel DÉBIL; confírmelas una a una.'))
     # C.I.: facturas QR validas reclasificadas por el cajero salen del cruce QR (antes de conciliar)
     ci_decl = {}
     for nf, d in (reclasificaciones or {}).items():

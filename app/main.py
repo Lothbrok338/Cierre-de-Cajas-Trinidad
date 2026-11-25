@@ -191,7 +191,7 @@ def create_app():
                 if movimiento is None or banco is None: raise ErrorUsuario('Seleccione los dos archivos.')
                 try: tj = formato.parsear_monto(tarjeta)
                 except ValueError: raise ErrorUsuario('Escriba el total cobrado con tarjetas en Bs (use 0 si no hubo). Ejemplo: 1191 o 1,191.50')
-                p1, n1 = await guardar_subida(movimiento, tmp, 'Movimiento del cajero', ('xls', 'xlsx'))
+                p1, n1 = await guardar_subida(movimiento, tmp, 'Movimiento del cajero', ('xls', 'xlsx', 'pdf'))
                 p2, n2 = await guardar_subida(banco, tmp, 'Reporte QR BANECO', ('xlsx',))
                 ext, _ = servicio.validar_a1(p1); servicio.validar_a2(p2)
                 p3 = n3 = None
@@ -419,7 +419,7 @@ def create_app():
             try:
                 p1 = p2 = ext = n1 = n2 = None
                 if movimiento is not None and movimiento.filename:
-                    p1, n1 = await guardar_subida(movimiento, tmp, 'Movimiento del cajero', ('xls', 'xlsx')); ext, _ = servicio.validar_a1(p1)
+                    p1, n1 = await guardar_subida(movimiento, tmp, 'Movimiento del cajero', ('xls', 'xlsx', 'pdf')); ext, _ = servicio.validar_a1(p1)
                 if banco is not None and banco.filename:
                     p2, n2 = await guardar_subida(banco, tmp, 'Reporte QR BANECO', ('xlsx',)); servicio.validar_a2(p2)
                 p3 = n3 = None
@@ -583,11 +583,11 @@ def create_app():
     @app.get('/cierres/{cid}/archivo/{nombre}')
     def descargar(request: Request, cid: int, nombre: str):
         u, c = cargar_cierre(request, cid)
-        ok = nombre in servicio.ARCHIVOS_CIERRE or nombre in ('movimiento_original.xls', 'movimiento_original.xlsx')
+        ok = nombre in servicio.ARCHIVOS_CIERRE or nombre in ('movimiento_original.xls', 'movimiento_original.xlsx', 'movimiento_original.pdf')
         ruta = os.path.join(alm.dir, c['ruta'], nombre)
         if not ok or not os.path.isfile(ruta): raise StarletteHTTPException(404, 'Archivo no encontrado.')
         alm.auditar(u['usuario'], 'descarga', {'cierre': c['correlativo'], 'archivo': nombre})
-        mt = servicio.ARCHIVOS_CIERRE.get(nombre, 'application/vnd.ms-excel' if nombre.endswith('.xls') else servicio.ARCHIVOS_CIERRE['conciliacion.xlsx'])
+        mt = servicio.ARCHIVOS_CIERRE.get(nombre, 'application/vnd.ms-excel' if nombre.endswith('.xls') else 'application/pdf' if nombre.endswith('.pdf') else servicio.ARCHIVOS_CIERRE['conciliacion.xlsx'])
         return FileResponse(ruta, media_type=mt, filename=f"{c['correlativo']}_{nombre}",
                             content_disposition_type='inline' if nombre in ('cierre.pdf', 'cierre_revision.pdf') and request.query_params.get('descargar') != '1' else 'attachment')
 
