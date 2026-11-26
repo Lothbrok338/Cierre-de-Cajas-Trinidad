@@ -16,18 +16,14 @@ def _celda(x):
 
 
 def _num(s):
-    try: return float(str(s).replace('BOB', '').replace(',', '').strip())
+    try: return motor.num(s)
     except ValueError: return None
 
 
 def _mapa_cabecera(celdas):
     """{columna canonica: indice} si la fila es la cabecera del detalle (tiene 'Nro' y 'Monto'), si no None."""
-    if not motor._es_cabecera(celdas): return None
-    cols = {}
-    for i, x in enumerate(celdas):
-        k = motor._nk(x)
-        if k in motor.COLS_A1_CANON and motor.COLS_A1_CANON[k] not in cols: cols[motor.COLS_A1_CANON[k]] = i
-    return cols
+    cols, _ = motor._mapear_a1(celdas)
+    return cols if 'Nro' in cols and 'Monto' in cols and len(cols) >= 3 else None
 
 
 def _filas_por_tablas(page, estado):

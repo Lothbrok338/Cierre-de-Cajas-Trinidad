@@ -96,6 +96,8 @@ def validar_a2(path):
         df = motor.parse_a2(path)
         if any(c not in df.columns for c in COLS_A2): raise ValueError
         motor.preparar_a2(df)
+    except motor.ErrorLecturaA2 as e:
+        raise ErrorUsuario(f'{MSG_A2} {e}')
     except Exception:
         raise ErrorUsuario(MSG_A2)
 

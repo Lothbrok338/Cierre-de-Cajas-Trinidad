@@ -96,3 +96,43 @@ def crear_a1_pdf(ruta, facturas=FACT_NUEVO, por_pagina=None, bordes=True, fecha=
         el += [Spacer(1, 6), Paragraph(f'Página: {n}/{total_pag}', c)]
         if n < total_pag: el.append(PageBreak())
     doc.build(el); return ruta
+
+
+# ---------- reporte del banco en el formato NUEVO (y variantes flexibles) ----------
+PAGOS_NUEVO = [(f'7100000{i}', es[:22], h, m) for i, (nf, tp, m, rs, es, est, h) in enumerate(FACT_NUEVO, start=1)]   # (id, titular, hora, monto)
+ENC_NUEVO = {'idqr': 'ID QR', 'trans': 'TRANSACCION PAGO', 'titular': 'TITULAR', 'glosa': 'GLOSA', 'punto': 'PUNTO VENTA', 'fecha': 'FECHA PAGO',
+             'hora': 'HORA PAGO', 'estado': 'ESTADO', 'importe': 'IMPORTE'}
+
+
+def _monto_txt(m, fmt):
+    if fmt == 'coma': return f'{m:.2f}'.replace('.', ',') + ' Bs'
+    if fmt == 'miles_punto': return f'{m:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+    return f'{m:,.2f} BOB'
+
+
+def crear_a2_nuevo(ruta, pagos=PAGOS_NUEVO, fecha=FECHA, fechas='texto', hoja='Pagos', filas_previas=0, estados=None, total=None, total_en='ESTADO',
+                   encabezados=None, orden=None, extra=False, monto_fmt='std', con_total=True, quitar=()):
+    """fechas: 'texto' (FECHA PAGO y HORA PAGO como texto) | 'real' (fecha y hora reales) | 'serial' (numeros) | 'junta' (una columna 'FECHA HORA' texto) |
+    'iso' (aaaa-mm-dd). estados: {id: estado}. total: importe de la fila TOTAL (por defecto la suma de los pagados). total_en: columna con la palabra TOTAL."""
+    enc = {**ENC_NUEVO, **(encabezados or {})}
+    orden = orden or ['idqr', 'trans', 'titular', 'glosa', 'punto', 'fecha', 'hora', 'estado', 'importe']
+    if fechas == 'junta': orden = [k for k in orden if k != 'hora']
+    wb = openpyxl.Workbook(); ws = wb.active; ws.title = hoja
+    for i in range(filas_previas): ws.append(['REPORTE DE PAGOS QR FICTICIO'] if i == 0 else [])
+    ws.append([enc[k] for k in orden] + (['OBSERVACION EXTRA'] if extra else []))
+    suma = 0.0
+    for idt, tit, h, m in pagos:
+        if idt in quitar: continue
+        est = (estados or {}).get(idt, 'Pagado'); hh = dt.datetime.strptime(h, '%H:%M:%S').time()
+        if est.lower() == 'pagado': suma += m
+        f = {'texto': f'{fecha:%d/%m/%Y}', 'real': fecha, 'serial': (fecha - dt.date(1899, 12, 30)).days, 'junta': f'{fecha:%d/%m/%Y} {h}',
+             'iso': f'{fecha:%Y-%m-%d}'}[fechas]
+        ho = {'texto': h, 'real': hh, 'serial': (hh.hour * 3600 + hh.minute * 60 + hh.second) / 86400.0, 'iso': h}.get(fechas)
+        val = {'idqr': '999', 'trans': idt, 'titular': tit, 'glosa': 'Ingresos', 'punto': 'SEDE X', 'fecha': f, 'hora': ho, 'estado': est,
+               'importe': _monto_txt(m, monto_fmt)}
+        ws.append([val[k] for k in orden] + (['x'] if extra else []))
+    if con_total:
+        fila = {k: None for k in orden}
+        fila[{'ESTADO': 'estado', 'PUNTO': 'punto'}.get(total_en, 'estado')] = 'TOTAL'; fila['importe'] = _monto_txt(suma if total is None else total, monto_fmt)
+        ws.append([fila[k] for k in orden])
+    wb.save(ruta); return ruta
